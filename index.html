@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f1115">
+<title>קליל כתוביות</title>
+<meta name="description" content="מוסיפים כתוביות לסרטון בעברית — חינם, בדפדפן, בלי להעלות את הסרטון לשום מקום.">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><img src="icon.svg" alt="" class="logo"> קליל <span>כתוביות</span></div>
+  <div class="top-actions">
+    <button id="btn-new" class="btn ghost sm" hidden>סרטון חדש</button>
+    <button id="btn-settings" class="btn icon" title="הגדרות תמלול">⚙</button>
+  </div>
+</header>
+
+<!-- מסך פתיחה -->
+<main id="start" class="start">
+  <label id="drop" class="drop">
+    <input id="file" type="file" accept="video/*,audio/*" hidden>
+    <div class="drop-icon">🎬</div>
+    <div class="drop-title">בחרו סרטון</div>
+    <div class="drop-sub">או גררו אותו לכאן</div>
+  </label>
+  <ul class="points">
+    <li>🎙 תמלול אוטומטי בעברית עם מודל של ivrit.ai</li>
+    <li>🔒 הסרטון לא עולה לשום מקום — הכל קורה אצלכם</li>
+    <li>✏️ עריכה נוחה של הטקסט, ואז הורדה עם הכתוביות</li>
+  </ul>
+  <p id="device-note" class="note"></p>
+</main>
+
+<!-- עורך -->
+<main id="editor" class="editor" hidden>
+  <section class="stage">
+    <div class="screen-wrap"><canvas id="screen"></canvas><button id="big-play" class="big-play" aria-label="נגן">▶</button></div>
+    <div class="transport">
+      <button id="btn-play" class="btn play" aria-label="נגן / עצור">▶</button>
+      <input id="seek" type="range" min="0" max="1" step="0.01" value="0" dir="ltr">
+      <span id="time" class="time">0:00 / 0:00</span>
+    </div>
+    <details class="style-box" open>
+      <summary>🎨 עיצוב הכתוביות</summary>
+      <div class="style-grid">
+        <div class="seg" id="style-seg">
+          <button data-v="bold">מודגש</button><button data-v="box">קופסה</button><button data-v="yellow">צהוב</button>
+        </div>
+        <div class="seg" id="pos-seg">
+          <button data-v="top">למעלה</button><button data-v="middle">באמצע</button><button data-v="bottom">למטה</button>
+        </div>
+        <label class="field">גודל <input id="size" type="range" min="3" max="10" step="0.5"></label>
+        <label class="chk"><input id="karaoke" type="checkbox"> הדגשת המילה שנאמרת</label>
+        <label class="field">אורך שורה
+          <select id="len">
+            <option value="16">קצר — טיקטוק / רילס</option>
+            <option value="30">בינוני</option>
+            <option value="42">ארוך</option>
+          </select>
+        </label>
+      </div>
+    </details>
+  </section>
+
+  <section class="side">
+    <div id="tx-status" class="tx-status" hidden>
+      <div class="spinner"></div>
+      <div class="tx-st-body"><div id="tx-st-text">מכין…</div><div class="pbar"><div id="tx-st-bar"></div></div></div>
+    </div>
+    <div class="side-head">
+      <h2>הכתוביות</h2>
+      <input id="search" type="search" placeholder="חיפוש…">
+    </div>
+    <div id="blocks" class="blocks"></div>
+    <div class="export">
+      <button id="btn-export" class="btn go">⬇ הורדת הסרטון עם הכתוביות</button>
+      <div class="export-row">
+        <button id="btn-srt" class="btn sm">SRT</button>
+        <button id="btn-vtt" class="btn sm">VTT</button>
+        <button id="btn-txt" class="btn sm">טקסט</button>
+        <button id="btn-copy" class="btn sm">העתקה</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div id="pool" aria-hidden="true"></div>
+
+<dialog id="dlg-settings" class="dlg">
+  <form method="dialog">
+    <h3>הגדרות תמלול</h3>
+    <label class="row">שפת הסרטון
+      <select id="set-lang">
+        <option value="he">עברית</option>
+        <option value="en">אנגלית</option>
+        <option value="ar">ערבית</option>
+        <option value="ru">רוסית</option>
+        <option value="fr">צרפתית</option>
+        <option value="es">ספרדית</option>
+        <option value="auto">זיהוי אוטומטי</option>
+      </select>
+    </label>
+    <label class="row">מודל
+      <select id="set-model">
+        <option value="auto">אוטומטי (מומלץ)</option>
+        <option value="ivrit">עברית — ivrit.ai Turbo (הכי מדויק לעברית, ~1.6GB)</option>
+        <option value="turbo">Whisper Turbo רב-לשוני (~1.3GB)</option>
+        <option value="small">Whisper Small — קל ומהיר, פחות מדויק (~250MB)</option>
+      </select>
+    </label>
+    <p class="note">המודל יורד פעם אחת ונשמר בדפדפן. הוא רץ על כרטיס המסך של המכשיר — לכן מחשב יהיה מהיר יותר מטלפון.</p>
+    <div class="dlg-actions">
+      <button class="btn primary" value="ok">שמירה</button>
+      <button id="btn-retx" class="btn ghost" value="retx" hidden>שמירה ותמלול מחדש</button>
+    </div>
+  </form>
+</dialog>
+
+<div id="export-overlay" class="overlay" hidden>
+  <div class="overlay-card">
+    <h3>מכין את הסרטון…</h3>
+    <p class="note">הסרטון מתנגן פעם אחת מההתחלה עד הסוף. השאירו את המסך הזה פתוח.</p>
+    <div class="bar"><div id="export-bar"></div></div>
+    <div id="export-txt">0%</div>
+    <button id="btn-export-cancel" class="btn">ביטול</button>
+  </div>
+</div>
+<div id="drop-overlay" class="drop-overlay" hidden><div>שחררו כאן 🎬</div></div>
+<div id="toast" class="toast" hidden></div>
+
+<script src="app.js"></script>
+</body>
+</html>
