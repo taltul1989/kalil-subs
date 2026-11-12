@@ -367,7 +367,21 @@ function spread(text, s, e) {
   const total = parts.reduce((a, p) => a + p.length + 1, 0); let t = s;
   return parts.map((p) => { const d = (e - s) * (p.length + 1) / total; const w = { text: p, start: t, end: t + d }; t += d; return w; });
 }
-function resToWords(d, off, len) {
+const BIDI = /[‎‏‪-‮⁦-⁩﻿]/g; // תווי כיוון נסתרים שהמודל מוסיף
+function cleanWords(ws) {
+  const out = [];
+  for (const w of ws) {
+    w.text = w.text.replace(BIDI, '').trim();
+    if (!w.text) continue;
+    const prev = out[out.length - 1];
+    // "-5" או סימן פיסוק בודד — מצמידים למילה הקודמת ("ה-5")
+    if (prev && (/^[-–־]/.test(w.text) || /^[^\p{L}\p{N}]+$/u.test(w.text))) { prev.text += w.text; prev.end = w.end; continue; }
+    out.push(w);
+  }
+  return out;
+}
+function resToWords(d, off, len) { return cleanWords(resToWordsRaw(d, off, len)); }
+function resToWordsRaw(d, off, len) {
   const out = [];
   if (d.kind === 'word') {
     for (const c of d.chunks) {
@@ -388,6 +402,7 @@ async function transcribe() {
   if (S.busy || !S.file) return;
   await gpuReady;
   S.busy = true; S.words = []; S.blocks = []; S.edited = false; renderBlocks();
+  try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch {} // שהדפדפן לא ימחק את המודל
   const key = S.key;
   let lock = null; try { lock = await navigator.wakeLock.request('screen'); } catch {}
   txStatus('מכין את האודיו…', 0);
@@ -402,7 +417,7 @@ async function transcribe() {
       const pct = i / parts.length;
       if (ready) txStatus(`מתמלל… ${Math.round(pct * 100)}%${eta(t0, doneSec, pcm.length / 16000)}`, pct);
       const d = await workerRun(seg, (ev) => {
-        if (ev.type === 'load') txStatus(`מוריד את מודל התמלול (רק בפעם הראשונה)… ${Math.round(ev.loaded / 1e6)}/${Math.round(ev.total / 1e6)}MB`, ev.loaded / ev.total);
+        if (ev.type === 'load') txStatus(`טוען את מודל התמלול… ${Math.round(ev.loaded / ev.total * 100)}%  (בפעם הראשונה הוא יורד, כ-1.6GB)`, ev.loaded / ev.total);
         else if (ev.type === 'ready' && !ready) { ready = true; txStatus(`מתמלל… ${Math.round(pct * 100)}%`, pct); }
         else if (ev.type === 'info') toast(ev.message, 4000);
       });
