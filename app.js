@@ -28,7 +28,7 @@ const S = {
   edited: false, busy: false, playing: false, exporting: null,
 };
 const MODELS = {
-  ivrit: 'instush/ivrit-whisper-large-v3-turbo-timestamped-onnx',
+  ivrit: 'taltul1989/kalil-ivrit-whisper-turbo-onnx', // עותק בחשבון שלנו (מקור: ivrit-ai, המרה: instush)
   turbo: 'onnx-community/whisper-large-v3-turbo',
   small: 'Xenova/whisper-small',
 };

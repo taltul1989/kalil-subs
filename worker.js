@@ -69,6 +69,11 @@ async function load(model, device, f16) {
   }
   asrKey = key;
   wordTimestampsOK = true;
+  // מוחקים קבצי מודל ישנים (של מודל אחר) כדי לא לבזבז מקום במכשיר
+  try {
+    const dir = await modelsDir, keep = fileName(model).slice(0, 60);
+    for await (const [n] of dir.entries()) if (/\.onnx(\.part)?$/.test(n) && !n.includes(keep)) await dir.removeEntry(n);
+  } catch {}
   return asr;
 }
 
