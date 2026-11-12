@@ -19,7 +19,7 @@ function download(blob, name) {
 }
 
 /* ---------- מצב ---------- */
-const settings = Object.assign({ lang: 'he', model: 'auto', style: 'bold', pos: 'bottom', size: 6, karaoke: true, len: 30 }, store.get('settings', {}));
+const settings = Object.assign({ engine: 'auto', lang: 'he', model: 'auto', style: 'bold', pos: 'bottom', size: 6, karaoke: true, len: 30 }, store.get('settings', {}));
 const saveSettings = () => store.set('settings', settings);
 const S = {
   file: null, key: '', video: null, dur: 0,
@@ -50,6 +50,7 @@ async function loadFile(f) {
   if (!f) return;
   if (!/^(video|audio)\//.test(f.type) && !/\.(mp4|mov|mkv|webm|m4v|avi|mp3|wav|m4a|aac|ogg)$/i.test(f.name)) return toast('צריך לבחור קובץ וידאו');
   if (S.busy) return toast('רגע, עוד מתמלל את הסרטון הקודם');
+  wakeServer();
   resetVideo();
   const v = document.createElement('video');
   v.preload = 'auto'; v.playsInline = true; v.src = URL.createObjectURL(f);
@@ -408,6 +409,8 @@ async function transcribe() {
   txStatus('מכין את האודיו…', 0);
   try {
     const pcm = await decodePcm(S.file);
+    if (useServer()) { if (!(await transcribeOnServer(pcm, key))) return; }
+    else {
     const parts = chunkPoints(pcm, 20, 28);
     let ready = false; const t0 = performance.now(); let doneSec = 0;
     for (let i = 0; i < parts.length; i++) {
@@ -425,6 +428,7 @@ async function transcribe() {
       S.words.push(...resToWords(d, a / 16000, (b - a) / 16000));
       S.blocks = groupWords(S.words, +settings.len); renderBlocks(); draw();
     }
+    }
     for (let i = 1; i < S.words.length; i++) if (S.words[i].start < S.words[i - 1].start) S.words[i].start = S.words[i - 1].start;
     S.blocks = groupWords(S.words, +settings.len);
     S.busy = false; txStatus(null); renderBlocks(); draw(); save();
@@ -434,6 +438,67 @@ async function transcribe() {
     toast(/decode|EncodingError/i.test(err.message) ? 'לא הצלחתי לקרוא את הסאונד של הסרטון' : 'התמלול נכשל: ' + err.message, 6000);
   } finally { try { lock && lock.release(); } catch {} }
 }
+/* ---------- תמלול בשרת (Modal) — רק למי שיש לו מפתח ---------- */
+const SERVER = 'https://taltul1989--kalil-transcribe-transcriber-web.us-east.modal.run';
+const serverKey = () => store.get('serverKey', '');
+function useServer() {
+  if (!serverKey() || settings.engine === 'device') return false;
+  return true; // יש מפתח: השרת מהיר יותר מכל מכשיר (כמה שניות לדקת סרטון)
+}
+// מעירים את השרת ברגע שבוחרים סרטון — כך ההתעוררות קורית בזמן שהטלפון מחלץ את הסאונד
+function wakeServer() { if (useServer()) fetch(SERVER + '/health').catch(() => {}); }
+function encodeWav(pcm) {
+  const buf = new ArrayBuffer(44 + pcm.length * 2), v = new DataView(buf);
+  const w = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  w(0, 'RIFF'); v.setUint32(4, 36 + pcm.length * 2, true); w(8, 'WAVE'); w(12, 'fmt ');
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, 16000, true);
+  v.setUint32(28, 32000, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, 'data'); v.setUint32(40, pcm.length * 2, true);
+  for (let i = 0; i < pcm.length; i++) v.setInt16(44 + i * 2, clamp(pcm[i], -1, 1) * 0x7fff, true);
+  return new Blob([buf], { type: 'audio/wav' });
+}
+async function transcribeOnServer(pcm, key) {
+  const parts = chunkPoints(pcm, 100, 120); // חתיכות של כשתי דקות — רואים התקדמות, והשרת נשאר ער ביניהן
+  const total = pcm.length / 16000;
+  for (let i = 0; i < parts.length; i++) {
+    if (S.key !== key) return false;
+    const [a, b] = parts[i];
+    const pct = i / parts.length;
+    const t0 = performance.now();
+    txStatus(i === 0 ? 'שולח לשרת…' : `מתמלל בשרת… ${Math.round(pct * 100)}%`, pct);
+    const slow = setTimeout(() => { if (S.busy) txStatus('השרת מתעורר (עד חצי דקה, רק בפעם הראשונה אחרי הפסקה)…', pct); }, 6000);
+    let res;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        res = await fetch(`${SERVER}/transcribe?language=${encodeURIComponent(settings.lang)}`, {
+          method: 'POST', headers: { 'x-kalil-key': serverKey() }, body: encodeWav(pcm.subarray(a, b)),
+        });
+        if (res.status >= 500 && attempt < 3) { await new Promise((r) => setTimeout(r, 2000 * attempt)); continue; }
+        break;
+      } catch (e) {
+        if (attempt >= 3) { clearTimeout(slow); throw new Error('אין חיבור לשרת. בדקו את האינטרנט ונסו שוב'); }
+        await new Promise((r) => setTimeout(r, 2000 * attempt));
+      }
+    }
+    clearTimeout(slow);
+    if (res.status === 401) { store.set('serverKey', ''); throw new Error('הקישור לשרת לא תקין. פתחו שוב את קישור החיבור'); }
+    if (!res.ok) throw new Error('השרת החזיר שגיאה ' + res.status);
+    const d = await res.json();
+    const off = a / 16000;
+    S.words.push(...cleanWords(d.words.map((w) => ({ text: w.text, start: off + w.start, end: off + w.end }))));
+    S.blocks = groupWords(S.words, +settings.len); renderBlocks(); draw();
+    console.log(`server chunk ${i + 1}/${parts.length}: ${((b - a) / 16000).toFixed(0)}s audio in ${((performance.now() - t0) / 1000).toFixed(1)}s`);
+  }
+  return true;
+}
+// חיבור המכשיר לשרת: פותחים פעם אחת קישור עם #key=... — המפתח נשמר רק במכשיר הזה
+(function readKeyFromLink() {
+  const m = location.hash.match(/key=([A-Za-z0-9_-]{10,})/);
+  if (!m) return;
+  store.set('serverKey', m[1]);
+  history.replaceState(null, '', location.pathname + location.search); // מוחקים את המפתח משורת הכתובת
+  setTimeout(() => toast('המכשיר מחובר לשרת התמלול ✓ מעכשיו התמלול מהיר', 5000), 300);
+})();
+
 function eta(t0, doneSec, totalSec) {
   if (doneSec < 20) return '';
   const el = (performance.now() - t0) / 1000, rate = el / doneSec, left = (totalSec - doneSec) * rate;
@@ -504,12 +569,15 @@ $('#len').onchange = (e) => {
 /* ---------- הגדרות ---------- */
 $('#btn-settings').onclick = () => {
   $('#set-lang').value = settings.lang; $('#set-model').value = settings.model;
+  $('#set-engine').value = settings.engine;
+  $('#server-row').hidden = !serverKey();
   $('#btn-retx').hidden = !S.file || S.busy;
   $('#dlg-settings').showModal();
 };
+$('#btn-disconnect').onclick = () => { store.set('serverKey', ''); $('#server-row').hidden = true; toast('המכשיר נותק מהשרת'); };
 $('#dlg-settings').addEventListener('close', () => {
   const v = $('#dlg-settings').returnValue;
-  settings.lang = $('#set-lang').value; settings.model = $('#set-model').value; saveSettings();
+  settings.lang = $('#set-lang').value; settings.model = $('#set-model').value; settings.engine = $('#set-engine').value; saveSettings();
   if (v === 'retx' && S.file) {
     if (S.edited && !confirm('תמלול מחדש ימחק את התיקונים שעשיתם. להמשיך?')) return;
     transcribe();

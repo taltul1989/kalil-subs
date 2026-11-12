@@ -96,6 +96,9 @@ input[type=range] { accent-color: var(--accent); }
 .dlg select { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; }
 .dlg .note { text-align: right; margin-bottom: 14px; }
 .dlg-actions { display: flex; gap: 8px; }
+.server-row { background: #14261b; border: 1px solid #23573a; border-radius: 10px; padding: 10px 12px; margin-bottom: 14px; display: flex; flex-direction: column; gap: 8px; }
+.server-row .row { margin-bottom: 0; }
+.server-row .btn { align-self: flex-start; }
 .overlay, .drop-overlay { position: fixed; inset: 0; background: rgba(5,6,9,.78); display: grid; place-items: center; z-index: 50; padding: 16px; }
 .overlay-card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 24px; width: min(420px, 100%); text-align: center; }
 .bar { height: 8px; background: #0b0d11; border-radius: 6px; overflow: hidden; margin: 14px 0 8px; }

@@ -106,7 +106,17 @@
         <option value="auto">זיהוי אוטומטי</option>
       </select>
     </label>
-    <label class="row">מודל
+    <div id="server-row" class="server-row" hidden>
+      <div>🟢 המכשיר מחובר לשרת התמלול</div>
+      <label class="row">איפה לתמלל
+        <select id="set-engine">
+          <option value="auto">בשרת — מהיר (מומלץ)</option>
+          <option value="device">במכשיר הזה</option>
+        </select>
+      </label>
+      <button type="button" id="btn-disconnect" class="btn sm ghost">ניתוק מהשרת</button>
+    </div>
+    <label class="row">מודל (לתמלול במכשיר)
       <select id="set-model">
         <option value="auto">אוטומטי (מומלץ)</option>
         <option value="ivrit">עברית — ivrit.ai Turbo (הכי מדויק לעברית, ~1.6GB)</option>
