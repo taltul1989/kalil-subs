@@ -118,7 +118,9 @@
       </select>
     </label>
     <div id="server-row" class="server-row" hidden>
-      <div>🟢 המכשיר מחובר לשרת התמלול</div>
+      <div id="server-who">🟢 המכשיר מחובר לשרת התמלול</div>
+      <div id="server-usage" class="usage" hidden><div class="ubar"><div id="usage-bar"></div></div><span id="usage-txt"></span></div>
+      <button type="button" id="btn-invites" class="btn sm primary" hidden>👥 ניהול הזמנות</button>
       <label class="row">איפה לתמלל
         <select id="set-engine">
           <option value="auto">בשרת — מהיר (מומלץ)</option>
@@ -141,6 +143,31 @@
       <button id="btn-retx" class="btn ghost" value="retx" hidden>שמירה ותמלול מחדש</button>
     </div>
   </form>
+</dialog>
+
+<dialog id="dlg-invites" class="dlg dlg-wide">
+  <div class="inv-head"><h3>👥 הזמנות</h3><button type="button" class="btn icon ghost" id="inv-close" aria-label="סגירה">✕</button></div>
+  <p class="note">כל הזמנה היא קישור אישי. מי שפותח אותו מקבל תמלול מהיר בשרת שלך, עד מגבלת הדקות החודשית שקבעת. אפשר לבטל גישה בכל רגע.</p>
+  <form id="inv-form" class="inv-form">
+    <input id="inv-name" type="text" placeholder="שם (למשל: דנה)" maxlength="40" required>
+    <select id="inv-limit" title="דקות סרטון בחודש">
+      <option value="30">30 דק׳ בחודש</option>
+      <option value="60" selected>60 דק׳ בחודש</option>
+      <option value="120">120 דק׳ בחודש</option>
+      <option value="300">300 דק׳ בחודש</option>
+    </select>
+    <button class="btn primary">➕ צור הזמנה</button>
+  </form>
+  <div id="inv-new" class="inv-new" hidden>
+    <div class="inv-new-title">ההזמנה של <b id="inv-new-name"></b> מוכנה</div>
+    <div id="inv-qr" class="inv-qr"></div>
+    <div class="inv-new-actions">
+      <button type="button" id="inv-share" class="btn go">📲 שליחה (וואטסאפ / הודעה)</button>
+      <button type="button" id="inv-copy" class="btn">העתקת הקישור</button>
+    </div>
+    <p class="note">אפשר גם לסרוק את הקוד מהטלפון של האדם שמוזמן.</p>
+  </div>
+  <div id="inv-list" class="inv-list"></div>
 </dialog>
 
 <div id="export-overlay" class="overlay" hidden>

@@ -559,6 +559,7 @@ async function transcribe() {
     for (let i = 1; i < S.words.length; i++) if (S.words[i].start < S.words[i - 1].start) S.words[i].start = S.words[i - 1].start;
     S.blocks = groupWords(S.words, +settings.len);
     S.busy = false; txStatus(null); renderBlocks(); draw(); save();
+    if (useServer()) refreshMe();
     toast(S.blocks.length ? `התמלול הסתיים ✓ ${S.blocks.length} שורות` : 'לא זוהה דיבור בסרטון', 3500);
   } catch (err) {
     console.error(err); S.busy = false; txStatus(null); renderBlocks();
@@ -620,6 +621,7 @@ async function transcribeOnServer(pcm, key) {
     }
     clearInterval(slow);
     if (res.status === 401) { store.set('serverKey', ''); throw new Error('הקישור לשרת לא תקין. פתחו שוב את קישור החיבור'); }
+    if (res.status === 429) { refreshMe(); throw new Error(`הגעת למגבלת הדקות החודשית (${me ? me.limit_min : ''} דק׳). אפשר לבקש הגדלה ממי ששלח לך את ההזמנה`); }
     if (!res.ok) throw new Error('השרת החזיר שגיאה ' + res.status);
     const d = res.data;
     txStatus(`מתמלל… ${Math.round((pct + span) * 100)}%`, pct + span);
@@ -636,8 +638,115 @@ async function transcribeOnServer(pcm, key) {
   if (!m) return;
   store.set('serverKey', m[1]);
   history.replaceState(null, '', location.pathname + location.search); // מוחקים את המפתח משורת הכתובת
-  setTimeout(() => toast('המכשיר מחובר לשרת התמלול ✓ מעכשיו התמלול מהיר', 5000), 300);
+  window.__justConnected = true;
 })();
+
+/* ---------- מי מחובר + שימוש ---------- */
+let me = null; // {role:'admin'|'invite', name, month_min, limit_min}
+async function api(path, opts = {}) {
+  const r = await fetch(SERVER + path, { ...opts, headers: { 'x-kalil-key': serverKey(), ...(opts.body ? { 'Content-Type': 'application/json' } : {}), ...(opts.headers || {}) } });
+  if (!r.ok) { const e = new Error('server ' + r.status); e.status = r.status; throw e; }
+  return r.json();
+}
+async function refreshMe() {
+  if (!serverKey()) { me = null; return; }
+  try { me = await api('/me'); }
+  catch (e) {
+    if (e.status === 401) { store.set('serverKey', ''); me = null; toast('הגישה לשרת התמלול הסתיימה — התמלול יחזור לרוץ על המכשיר', 6000); }
+    return;
+  }
+  if (window.__justConnected) {
+    window.__justConnected = false;
+    toast(me.role === 'admin' ? 'המכשיר מחובר לשרת התמלול ✓' : `שלום ${me.name}! קיבלת גישה לתמלול מהיר ✓`, 6000);
+  }
+}
+refreshMe();
+function renderServerRow() {
+  const on = !!serverKey();
+  $('#server-row').hidden = !on;
+  if (!on) return;
+  const isAdmin = me && me.role === 'admin';
+  $('#server-who').textContent = me ? (isAdmin ? '🟢 מחובר לשרת התמלול (מנהלת)' : `🟢 מחובר לשרת התמלול · ${me.name}`) : '🟢 המכשיר מחובר לשרת התמלול';
+  $('#btn-invites').hidden = !isAdmin;
+  const showUse = me && me.role === 'invite';
+  $('#server-usage').hidden = !showUse;
+  if (showUse) {
+    $('#usage-bar').style.width = clamp(me.month_min / me.limit_min, 0, 1) * 100 + '%';
+    $('#usage-txt').textContent = `${me.month_min} מתוך ${me.limit_min} דק׳ החודש`;
+  }
+}
+
+/* ---------- ניהול הזמנות (מנהלת) ---------- */
+const SITE = 'https://taltul1989.github.io/kalil-subs/';
+const inviteLink = (key) => `${SITE}#key=${key}`;
+let qrLib = null;
+function loadQr() {
+  if (!qrLib) qrLib = new Promise((res, rej) => { const s = document.createElement('script'); s.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js'; s.onload = res; s.onerror = rej; document.head.appendChild(s); });
+  return qrLib;
+}
+const ago = (ts) => { if (!ts) return 'עוד לא השתמש/ה'; const d = (Date.now() / 1000 - ts) / 3600; return d < 1 ? 'השתמש/ה לפני פחות משעה' : d < 24 ? `השתמש/ה לפני ${Math.round(d)} שעות` : `השתמש/ה לפני ${Math.round(d / 24)} ימים`; };
+async function openInvites() {
+  $('#dlg-settings').close();
+  $('#inv-new').hidden = true;
+  $('#dlg-invites').showModal();
+  await renderInviteList();
+}
+async function renderInviteList() {
+  const box = $('#inv-list');
+  box.innerHTML = '<div class="inv-empty">טוען…</div>';
+  let list;
+  try { list = (await api('/admin/invites')).invites; } catch { box.innerHTML = '<div class="inv-empty">לא הצלחתי לטעון את ההזמנות. בדקו את החיבור ונסו שוב.</div>'; return; }
+  if (!list.length) { box.innerHTML = '<div class="inv-empty">עוד אין הזמנות. צרו את הראשונה למעלה.</div>'; return; }
+  box.innerHTML = '';
+  for (const inv of list) {
+    const row = document.createElement('div');
+    row.className = 'inv-row' + (inv.active ? '' : ' off');
+    row.innerHTML = `<div class="nm"></div>
+      <div class="meta"></div>
+      <div class="acts">
+        <select title="מגבלת דקות בחודש">${[30, 60, 120, 300].map((v) => `<option value="${v}" ${v === inv.limit_min ? 'selected' : ''}>${v} דק׳</option>`).join('')}</select>
+        <button type="button" class="btn sm ${inv.active ? '' : 'primary'}">${inv.active ? 'ביטול גישה' : 'החזרת גישה'}</button>
+        <button type="button" class="btn sm ghost" title="שליחה מחדש">📲</button>
+      </div>`;
+    row.querySelector('.nm').textContent = inv.name + (inv.active ? '' : ' (מבוטל)');
+    row.querySelector('.meta').textContent = `${inv.month_min} / ${inv.limit_min} דק׳ החודש · ${ago(inv.last)}`;
+    const [sel, toggle, resend] = row.querySelectorAll('select, button');
+    sel.onchange = async () => { try { await api('/admin/invites/' + inv.key, { method: 'POST', body: JSON.stringify({ limit_min: +sel.value }) }); toast('המגבלה עודכנה'); renderInviteList(); } catch { toast('העדכון נכשל'); } };
+    toggle.onclick = async () => {
+      if (inv.active && !confirm(`לבטל את הגישה של ${inv.name}? הקישור שלו/ה יפסיק לעבוד (אפשר להחזיר אחר כך).`)) return;
+      try { await api('/admin/invites/' + inv.key, { method: 'POST', body: JSON.stringify({ active: !inv.active }) }); renderInviteList(); } catch { toast('העדכון נכשל'); }
+    };
+    resend.onclick = () => showNewInvite(inv);
+    box.appendChild(row);
+  }
+}
+async function showNewInvite(inv) {
+  $('#inv-new').hidden = false;
+  $('#inv-new-name').textContent = inv.name;
+  const link = inviteLink(inv.key), qr = $('#inv-qr');
+  qr.innerHTML = '';
+  try { await loadQr(); new window.QRCode(qr, { text: link, width: 200, height: 200 }); } catch { qr.textContent = link; }
+  const msg = `היי ${inv.name}! הזמנתי אותך לנסות את "קליל כתוביות" — כתוביות אוטומטיות בעברית לסרטונים. פשוט פותחים את הקישור (עדיף ב-Chrome):`;
+  $('#inv-share').onclick = async () => {
+    if (navigator.share) { try { await navigator.share({ title: 'קליל כתוביות', text: msg, url: link }); } catch {} }
+    else { window.open('https://wa.me/?text=' + encodeURIComponent(msg + '\n' + link), '_blank'); }
+  };
+  $('#inv-copy').onclick = async () => { try { await navigator.clipboard.writeText(link); toast('הקישור הועתק ✓'); } catch { prompt('העתיקו את הקישור:', link); } };
+  $('#inv-new').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+$('#inv-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const name = $('#inv-name').value.trim(); if (!name) return;
+  const btn = e.submitter; if (btn) btn.disabled = true;
+  try {
+    const inv = await api('/admin/invites', { method: 'POST', body: JSON.stringify({ name, limit_min: +$('#inv-limit').value }) });
+    $('#inv-name').value = '';
+    await showNewInvite(inv); renderInviteList();
+  } catch { toast('לא הצלחתי ליצור הזמנה. נסו שוב'); }
+  finally { if (btn) btn.disabled = false; }
+});
+$('#btn-invites').onclick = openInvites;
+$('#inv-close').onclick = () => $('#dlg-invites').close();
 
 function eta(t0, doneSec, totalSec) {
   if (doneSec < 20) return '';
@@ -724,7 +833,7 @@ $('#len').onchange = (e) => {
 $('#btn-settings').onclick = () => {
   $('#set-lang').value = settings.lang; $('#set-model').value = settings.model;
   $('#set-engine').value = settings.engine;
-  $('#server-row').hidden = !serverKey();
+  renderServerRow(); refreshMe().then(renderServerRow);
   $('#btn-retx').hidden = !S.file || S.busy;
   $('#dlg-settings').showModal();
 };
