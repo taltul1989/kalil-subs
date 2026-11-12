@@ -80,6 +80,7 @@ input[type=range] { accent-color: var(--accent); }
 .tbtn { background: none; border: 1px solid transparent; border-radius: 6px; padding: 2px 5px; color: var(--muted); cursor: pointer; font-variant-numeric: tabular-nums; font-size: 12px; }
 .tbtn:hover { border-color: var(--line); color: var(--text); }
 .blk-text { font-size: 17px; line-height: 1.6; padding: 4px 6px; margin-top: 2px; border-radius: 8px; outline: none; white-space: pre-wrap; word-break: break-word; }
+.blk-text:empty::before { content: 'הקלידו כאן את הטקסט…'; color: var(--muted); }
 .blk-text:focus { background: #0f1115; box-shadow: 0 0 0 2px var(--accent); }
 .blk-acts { display: none; gap: 4px; margin-top: 6px; flex-wrap: wrap; }
 .blk:hover .blk-acts, .blk.cur .blk-acts, .blk:focus-within .blk-acts { display: flex; }
@@ -105,6 +106,8 @@ input[type=range] { accent-color: var(--accent); }
 #export-bar { height: 100%; width: 0; background: var(--go); }
 #export-txt { margin-bottom: 14px; color: var(--muted); }
 .drop-overlay { border: 3px dashed var(--accent); font-size: 24px; pointer-events: none; }
+@media (pointer: coarse) { .only-desktop { display: none; } }
+.done-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
 #pool { position: fixed; left: 0; top: 0; width: 1px; height: 1px; opacity: 0; overflow: hidden; pointer-events: none; }
 .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #2b2f3a; border: 1px solid var(--line); padding: 10px 16px; border-radius: 12px; z-index: 60; box-shadow: 0 8px 30px rgba(0,0,0,.45); max-width: 90vw; text-align: center; }
 

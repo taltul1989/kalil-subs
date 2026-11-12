@@ -250,6 +250,7 @@ function renderBlocks() {
         <button data-a="play">▶ נגן</button>
         <button data-a="split" title="חיתוך השורה במקום של הסמן">✂ פצל כאן</button>
         <button data-a="merge" title="איחוד עם השורה הבאה">⤓ אחד עם הבאה</button>
+        <button data-a="add" title="הוספת שורה חדשה אחרי השורה הזו">➕ אחרי</button>
         <button data-a="del" class="del">🗑</button>
       </div>`;
     el.querySelector('.blk-text').textContent = b.text;
@@ -281,6 +282,10 @@ blocksBox.addEventListener('click', (e) => {
     b.text = (b.text + ' ' + next.text).trim(); b.end = next.end;
     b.words = b.words && next.words ? b.words.concat(next.words) : null;
     S.blocks.splice(i + 1, 1); changed(true);
+  } else if (a === 'add') {
+    const next = S.blocks[i + 1];
+    const gapAfter = (next ? next.start : S.dur) - b.end;
+    addBlockAt(gapAfter > 0.4 ? b.end : (b.start + b.end) / 2);
   } else if (a === 'del') {
     S.blocks.splice(i, 1); changed(true); toast('השורה נמחקה');
   } else if (a === 'split') {
@@ -299,6 +304,34 @@ blocksBox.addEventListener('click', (e) => {
     S.blocks.splice(i + 1, 0, nb); changed(true);
   }
 });
+// הוספת שורה חדשה בנקודת זמן (למשל משפט שהתמלול פספס)
+function addBlockAt(t) {
+  if (!S.video) return;
+  if (S.busy) return toast('אפשר להוסיף שורות אחרי שהתמלול יסתיים');
+  pause();
+  t = clamp(t, 0, S.dur);
+  let idx = S.blocks.findIndex((b) => t >= b.start && t < b.end);
+  let nb;
+  if (idx >= 0) {
+    // הסמן בתוך שורה קיימת — מחלקים את הזמן שלה: השורה הקיימת עד הסמן, החדשה מהסמן
+    const b = S.blocks[idx];
+    if (t - b.start < 0.3) t = b.start + (b.end - b.start) / 2;
+    nb = { id: uid(), start: t, end: b.end, text: '', words: null };
+    b.end = t; idx += 1;
+  } else {
+    // הסמן ברווח בין שורות — שורה של עד 2.5 שניות, עד השורה הבאה
+    idx = S.blocks.findIndex((b) => b.start > t); if (idx < 0) idx = S.blocks.length;
+    const next = S.blocks[idx];
+    nb = { id: uid(), start: t, end: Math.min(t + 2.5, next ? next.start : S.dur), text: '', words: null };
+  }
+  if (nb.end - nb.start < 0.3) return toast('אין כאן מקום לשורה — הזיזו קצת את הסרטון');
+  S.blocks.splice(idx, 0, nb);
+  changed(true);
+  seek(nb.start + 0.01);
+  const el = document.querySelector(`.blk[data-id="${nb.id}"] .blk-text`);
+  if (el) { el.scrollIntoView({ block: 'center' }); el.focus(); }
+}
+$('#btn-add').onclick = () => addBlockAt(S.video ? S.video.currentTime : 0);
 function caretOffset(el) {
   const sel = getSelection(); if (!sel.rangeCount || !el.contains(sel.anchorNode)) return null;
   const r = sel.getRangeAt(0).cloneRange(); r.selectNodeContents(el); r.setEnd(sel.anchorNode, sel.anchorOffset);
@@ -409,7 +442,7 @@ async function transcribe() {
   txStatus('מכין את האודיו…', 0);
   try {
     const pcm = await decodePcm(S.file);
-    if (useServer()) { if (!(await transcribeOnServer(pcm, key))) return; }
+    if (useServer()) { if (!(await transcribeOnServer(pcm, key))) { S.busy = false; txStatus(null); return; } }
     else {
     const parts = chunkPoints(pcm, 20, 28);
     let ready = false; const t0 = performance.now(); let doneSec = 0;
@@ -462,27 +495,40 @@ async function transcribeOnServer(pcm, key) {
   for (let i = 0; i < parts.length; i++) {
     if (S.key !== key) return false;
     const [a, b] = parts[i];
-    const pct = i / parts.length;
+    const pct = i / parts.length, span = 1 / parts.length;
     const t0 = performance.now();
-    txStatus(i === 0 ? 'שולח לשרת…' : `מתמלל בשרת… ${Math.round(pct * 100)}%`, pct);
-    const slow = setTimeout(() => { if (S.busy) txStatus('השרת מתעורר (עד חצי דקה, רק בפעם הראשונה אחרי הפסקה)…', pct); }, 6000);
+    // פס התקדמות שזז בהדרגה בזמן שמחכים לשרת (גם אם הוא מתעורר) — בלי הודעות טכניות
+    let shown = pct;
+    txStatus(`מתמלל… ${Math.round(shown * 100)}%`, shown);
+    const slow = setInterval(() => {
+      shown += (pct + span * 0.95 - shown) * 0.02;
+      if (S.busy) txStatus(`מתמלל… ${Math.round(shown * 100)}%`, shown);
+    }, 250);
     let res;
+    const body = encodeWav(pcm.subarray(a, b));
     for (let attempt = 1; ; attempt++) {
+      // אם התשובה לא הגיעה תוך 100 שניות (רשת חלשה / חיבור שנפל) — שולחים שוב
+      const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), 100000);
       try {
         res = await fetch(`${SERVER}/transcribe?language=${encodeURIComponent(settings.lang)}`, {
-          method: 'POST', headers: { 'x-kalil-key': serverKey() }, body: encodeWav(pcm.subarray(a, b)),
+          method: 'POST', headers: { 'x-kalil-key': serverKey() }, body, signal: ctrl.signal,
         });
+        res = { status: res.status, ok: res.ok, data: res.ok ? await res.json() : null }; // גם קריאת התשובה בתוך מגבלת הזמן
+        clearTimeout(timer);
         if (res.status >= 500 && attempt < 3) { await new Promise((r) => setTimeout(r, 2000 * attempt)); continue; }
         break;
       } catch (e) {
-        if (attempt >= 3) { clearTimeout(slow); throw new Error('אין חיבור לשרת. בדקו את האינטרנט ונסו שוב'); }
+        clearTimeout(timer);
+        if (S.key !== key) { clearInterval(slow); return false; }
+        if (attempt >= 3) { clearInterval(slow); throw new Error('אין חיבור לשרת. בדקו את האינטרנט ונסו שוב'); }
         await new Promise((r) => setTimeout(r, 2000 * attempt));
       }
     }
-    clearTimeout(slow);
+    clearInterval(slow);
     if (res.status === 401) { store.set('serverKey', ''); throw new Error('הקישור לשרת לא תקין. פתחו שוב את קישור החיבור'); }
     if (!res.ok) throw new Error('השרת החזיר שגיאה ' + res.status);
-    const d = await res.json();
+    const d = res.data;
+    txStatus(`מתמלל… ${Math.round((pct + span) * 100)}%`, pct + span);
     const off = a / 16000;
     S.words.push(...cleanWords(d.words.map((w) => ({ text: w.text, start: off + w.start, end: off + w.end }))));
     S.blocks = groupWords(S.words, +settings.len); renderBlocks(); draw();
@@ -530,15 +576,29 @@ function finishExport() {
   S.exporting = null; speaker.gain.value = 1;
   try { ex.lock && ex.lock.release(); } catch {}
   ex.rec.onstop = () => {
-    $('#export-overlay').hidden = true;
-    if (ex.cancelled) return toast('בוטל');
+    if (ex.cancelled) { $('#export-overlay').hidden = true; return toast('בוטל'); }
     const ext = ex.mime.includes('mp4') ? 'mp4' : 'webm';
     const base = S.file.name.replace(/\.[^.]+$/, '');
-    download(new Blob(ex.chunks, { type: ex.mime }), `${base}-כתוביות.${ext}`);
-    toast('הסרטון מוכן ✓ נשמר בהורדות', 4000);
+    const name = `${base}-כתוביות.${ext}`;
+    const blob = new Blob(ex.chunks, { type: ex.mime.split(';')[0] });
+    const file = new File([blob], name, { type: blob.type });
+    const canShare = matchMedia('(pointer: coarse)').matches && !!(navigator.canShare && navigator.canShare({ files: [file] }));
+    if (!canShare) { // מחשב: הורדה רגילה
+      $('#export-overlay').hidden = true;
+      download(blob, name); toast('הסרטון מוכן ✓ נשמר בהורדות', 4000); return;
+    }
+    // טלפון: חלון "מוכן" — השיתוף חייב לצאת מלחיצה של המשתמש
+    $('#export-progress').hidden = true; $('#export-done').hidden = false;
+    $('#btn-share').onclick = async () => {
+      try { await navigator.share({ files: [file], title: name }); closeDone(); }
+      catch (e) { if (e.name !== 'AbortError') toast('השיתוף לא הצליח — אפשר להוריד כקובץ'); }
+    };
+    $('#btn-download').onclick = () => { download(blob, name); toast('נשמר בהורדות ✓ (מופיע גם בגלריה, באלבום "Download")', 4500); closeDone(); };
   };
   ex.rec.stop();
 }
+function closeDone() { $('#export-overlay').hidden = true; $('#export-done').hidden = true; $('#export-progress').hidden = false; }
+$('#btn-done-close').onclick = closeDone;
 $('#btn-export').onclick = exportVideo;
 $('#btn-export-cancel').onclick = () => { if (S.exporting) { S.exporting.cancelled = true; S.video.pause(); finishExport(); } };
 

@@ -24,10 +24,10 @@
 <!-- מסך פתיחה -->
 <main id="start" class="start">
   <label id="drop" class="drop">
-    <input id="file" type="file" accept="video/*,audio/*" hidden>
+    <input id="file" type="file" accept="video/*" hidden>
     <div class="drop-icon">🎬</div>
-    <div class="drop-title">בחרו סרטון</div>
-    <div class="drop-sub">או גררו אותו לכאן</div>
+    <div class="drop-title">בחרו סרטון מהגלריה</div>
+    <div class="drop-sub only-desktop">או גררו אותו לכאן</div>
   </label>
   <ul class="points">
     <li>🎙 תמלול אוטומטי בעברית עם מודל של ivrit.ai</li>
@@ -76,6 +76,7 @@
     <div class="side-head">
       <h2>הכתוביות</h2>
       <input id="search" type="search" placeholder="חיפוש…">
+      <button id="btn-add" class="btn sm primary" title="הוספת שורה בנקודה שבה הסרטון עומד">➕ שורה</button>
     </div>
     <div id="blocks" class="blocks"></div>
     <div class="export">
@@ -133,12 +134,21 @@
 </dialog>
 
 <div id="export-overlay" class="overlay" hidden>
-  <div class="overlay-card">
+  <div class="overlay-card" id="export-progress">
     <h3>מכין את הסרטון…</h3>
     <p class="note">הסרטון מתנגן פעם אחת מההתחלה עד הסוף. השאירו את המסך הזה פתוח.</p>
     <div class="bar"><div id="export-bar"></div></div>
     <div id="export-txt">0%</div>
     <button id="btn-export-cancel" class="btn">ביטול</button>
+  </div>
+  <div class="overlay-card" id="export-done" hidden>
+    <h3>הסרטון מוכן ✓</h3>
+    <p class="note">שמרו אותו לגלריה או שלחו ישר לוואטסאפ / אינסטגרם.</p>
+    <div class="done-actions">
+      <button id="btn-share" class="btn go">📲 שמירה לגלריה / שיתוף</button>
+      <button id="btn-download" class="btn">⬇ הורדה כקובץ</button>
+      <button id="btn-done-close" class="btn ghost">סגירה</button>
+    </div>
   </div>
 </div>
 <div id="drop-overlay" class="drop-overlay" hidden><div>שחררו כאן 🎬</div></div>
