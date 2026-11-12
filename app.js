@@ -65,6 +65,10 @@ async function loadFile(f) {
   v.addEventListener('ended', onEnded);
   sizeCanvas();
   $('#start').hidden = true; $('#editor').hidden = false; $('#btn-new').hidden = false;
+  // מפענחים את הסאונד פעם אחת: גם לגל הקול בפס הזמן וגם לתמלול
+  peaks = null;
+  S.pcmP = decodePcm(f).catch(() => null);
+  S.pcmP.then((p) => { if (p && S.file === f) { computePeaks(p); drawWave(); } });
   if (matchMedia('(max-width: 860px)').matches) $('.style-box').open = false;
   $('#seek').max = S.dur; updateTime();
   const saved = store.get('proj:' + S.key, null);
@@ -127,8 +131,10 @@ function updateTime(follow) {
   $('#time').textContent = `${fmt(t, 0)} / ${fmt(S.dur, 0)}`;
   if (document.activeElement !== $('#seek')) $('#seek').value = t;
   const b = blockAt(t);
+  syncStrip();
   if (b !== lastCur) {
-    document.querySelectorAll('.blk.cur').forEach((e) => e.classList.remove('cur'));
+    document.querySelectorAll('.blk.cur, .sb.cur').forEach((e) => e.classList.remove('cur'));
+    if (b) { const sb = document.querySelector(`.sb[data-id="${b.id}"]`); if (sb) sb.classList.add('cur'); }
     if (b) {
       const el = document.querySelector(`.blk[data-id="${b.id}"]`);
       if (el) {
@@ -234,7 +240,7 @@ function renderBlocks() {
   const box = $('#blocks');
   if (!S.blocks.length) {
     box.innerHTML = S.busy ? '<div class="empty">הכתוביות יופיעו כאן תוך כדי התמלול…</div>' : '<div class="empty">לא זוהה דיבור בסרטון.</div>';
-    return;
+    renderStrip(); return;
   }
   const q = $('#search').value.trim().toLowerCase();
   box.innerHTML = '';
@@ -242,9 +248,7 @@ function renderBlocks() {
     const el = document.createElement('div');
     el.className = 'blk' + (q && b.text.toLowerCase().includes(q) ? ' hit' : '');
     el.dataset.id = b.id;
-    el.innerHTML = `<div class="blk-top">
-        <button class="tbtn" data-a="start" title="קביעת ההתחלה לנקודה הנוכחית בסרטון">${fmt(b.start)}</button> –
-        <button class="tbtn" data-a="end" title="קביעת הסוף לנקודה הנוכחית בסרטון">${fmt(b.end)}</button></div>
+    el.innerHTML = `<div class="blk-top"><span class="tlbl">${fmt(b.start)} – ${fmt(b.end)}</span></div>
       <div class="blk-text" dir="auto" contenteditable="${S.busy ? 'false' : 'true'}" spellcheck="false"></div>
       <div class="blk-acts">
         <button data-a="play">▶ נגן</button>
@@ -256,7 +260,7 @@ function renderBlocks() {
     el.querySelector('.blk-text').textContent = b.text;
     box.appendChild(el);
   }
-  lastCur = null; updateTime();
+  lastCur = null; renderStrip(); updateTime();
 }
 const blocksBox = $('#blocks');
 blocksBox.addEventListener('click', (e) => {
@@ -265,19 +269,8 @@ blocksBox.addEventListener('click', (e) => {
   const a = e.target.closest('[data-a]') && e.target.closest('[data-a]').dataset.a;
   if (!a) { if (!e.target.closest('.blk-text')) { pause(); seek(b.start + 0.01); } return; }
   if (S.busy) return toast('אפשר לערוך אחרי שהתמלול יסתיים');
-  const t = S.video.currentTime;
   if (a === 'play') { seek(b.start + 0.01); play(); stopAt = b.end; }
-  else if (a === 'start') {
-    const prev = S.blocks[i - 1];
-    if (t >= b.end - 0.1) return toast('הסמן צריך להיות לפני סוף השורה');
-    b.start = Math.max(t, prev ? prev.start + 0.1 : 0); if (prev && prev.end > b.start) prev.end = b.start;
-    changed(true); toast('ההתחלה עודכנה ל-' + fmt(b.start));
-  } else if (a === 'end') {
-    const next = S.blocks[i + 1];
-    if (t <= b.start + 0.1) return toast('הסמן צריך להיות אחרי תחילת השורה');
-    b.end = Math.min(t, next ? next.end - 0.1 : S.dur); if (next && next.start < b.end) next.start = b.end;
-    changed(true); toast('הסוף עודכן ל-' + fmt(b.end));
-  } else if (a === 'merge') {
+  else if (a === 'merge') {
     const next = S.blocks[i + 1]; if (!next) return;
     b.text = (b.text + ' ' + next.text).trim(); b.end = next.end;
     b.words = b.words && next.words ? b.words.concat(next.words) : null;
@@ -354,6 +347,107 @@ blocksBox.addEventListener('keydown', (e) => {
 });
 let stopAt = null;
 setInterval(() => { if (stopAt != null && S.playing && S.video.currentTime >= stopAt) { pause(); stopAt = null; } else if (!S.playing) stopAt = null; }, 50);
+/* ---------- פס הזמן: גל קול + השורות, גרירת קצוות ---------- */
+const strip = $('#strip'), stripInner = $('#strip-inner'), stripBlocks = $('#strip-blocks'), stripWave = $('#strip-wave');
+let Z = 90;                 // פיקסלים לשנייה
+let peaks = null;           // עוצמת הקול, 50 ערכים לשנייה
+let stripDrag = false, progScrollAt = 0;
+const PPS = 50;
+const stripPad = () => strip.clientWidth / 2;
+function computePeaks(pcm) {
+  const step = 16000 / PPS, n = Math.ceil(pcm.length / step), p = new Float32Array(n); let max = 0.01;
+  for (let i = 0; i < n; i++) { let m = 0; const s = i * step, e = Math.min(pcm.length, s + step); for (let k = s; k < e; k += 4) { const v = Math.abs(pcm[k]); if (v > m) m = v; } p[i] = m; if (m > max) max = m; }
+  for (let i = 0; i < n; i++) p[i] /= max;
+  peaks = p;
+}
+function drawWave() {
+  stripWave.innerHTML = '';
+  if (!peaks || !S.video) return;
+  const P = stripPad(), total = Math.ceil(S.dur * Z), H = strip.clientHeight || 70, SEG = 4000;
+  for (let x0 = 0; x0 < total; x0 += SEG) {
+    const w = Math.min(SEG, total - x0), c = document.createElement('canvas');
+    c.width = w; c.height = H; c.style.left = P + x0 + 'px'; c.style.width = w + 'px';
+    const g = c.getContext('2d'); g.fillStyle = 'rgba(160, 170, 195, .38)';
+    for (let x = 0; x < w; x++) {
+      const v = peaks[Math.floor((x0 + x) / Z * PPS)] || 0, h = Math.max(1, v * H * 0.8);
+      g.fillRect(x, (H - h) / 2, 1, h);
+    }
+    stripWave.appendChild(c);
+  }
+}
+function renderStrip() {
+  if (!S.video) return;
+  const P = stripPad();
+  stripInner.style.width = S.dur * Z + 2 * P + 'px';
+  stripBlocks.innerHTML = '';
+  for (const b of S.blocks) {
+    const el = document.createElement('div');
+    el.className = 'sb' + (b === lastCur ? ' cur' : ''); el.dataset.id = b.id;
+    placeSb(el, b, P);
+    el.innerHTML = '<div class="sb-h l" data-e="start" title="גררו לשינוי ההתחלה"></div><span></span><div class="sb-h r" data-e="end" title="גררו לשינוי הסוף"></div>';
+    el.querySelector('span').textContent = b.text.trim() || '…';
+    el.querySelector('span').dir = 'auto';
+    stripBlocks.appendChild(el);
+  }
+  drawWave(); syncStrip(true);
+}
+function placeSb(el, b, P = stripPad()) { el.style.left = P + b.start * Z + 'px'; el.style.width = Math.max(8, (b.end - b.start) * Z) + 'px'; }
+function syncStrip(force) {
+  if (!S.video || stripDrag) return;
+  const x = S.video.currentTime * Z;
+  if (force || Math.abs(strip.scrollLeft - x) > 1) { progScrollAt = performance.now(); strip.scrollLeft = x; }
+}
+// החלקה על הפס = תזוזה בסרטון (הקו הצהוב באמצע הוא "עכשיו")
+strip.addEventListener('pointerdown', (e) => { if (!e.target.closest('.sb-h') && S.playing) pause(); });
+strip.addEventListener('scroll', () => {
+  if (stripDrag || performance.now() - progScrollAt < 120 || !S.video) return;
+  if (S.playing) pause();
+  S.video.currentTime = clamp(strip.scrollLeft / Z, 0, S.dur);
+});
+function setZoom(z) { Z = clamp(z, 20, 400); renderStrip(); }
+$('#zoom-in').onclick = () => setZoom(Z * 1.5);
+$('#zoom-out').onclick = () => setZoom(Z / 1.5);
+// גרירת הקצוות של שורה
+stripBlocks.addEventListener('pointerdown', (e) => {
+  const sb = e.target.closest('.sb'); if (!sb) return;
+  const i = S.blocks.findIndex((x) => x.id === sb.dataset.id), b = S.blocks[i]; if (!b) return;
+  const edge = e.target.closest('.sb-h') && e.target.closest('.sb-h').dataset.e;
+  const x0 = e.clientX;
+  if (!edge) { // לחיצה על השורה עצמה: קופצים אליה (גרירה רגילה = גלילה של הפס)
+    const up = (ev) => { window.removeEventListener('pointerup', up); if (Math.abs(ev.clientX - x0) < 8) { pause(); seek(b.start + 0.01); scrollListTo(b); } };
+    window.addEventListener('pointerup', up); return;
+  }
+  if (S.busy) return toast('אפשר לערוך אחרי שהתמלול יסתיים');
+  e.preventDefault(); e.stopPropagation();
+  pause(); stripDrag = true; sb.classList.add('drag');
+  try { sb.setPointerCapture(e.pointerId); } catch {}
+  const prev = S.blocks[i - 1], next = S.blocks[i + 1], o = { start: b.start, end: b.end };
+  const tip = $('#strip-tip'); let moved = false;
+  const show = (t) => { tip.hidden = false; tip.textContent = (edge === 'start' ? 'התחלה ' : 'סוף ') + fmt(t, 2); };
+  show(edge === 'start' ? b.start : b.end);
+  const move = (ev) => {
+    const dx = (ev.clientX - x0) / Z; if (Math.abs(ev.clientX - x0) > 2) moved = true;
+    if (edge === 'start') { b.start = clamp(o.start + dx, prev ? prev.end : 0, b.end - 0.3); S.video.currentTime = b.start + 0.01; show(b.start); }
+    else { b.end = clamp(o.end + dx, b.start + 0.3, next ? next.start : S.dur); S.video.currentTime = Math.max(b.start, b.end - 0.05); show(b.end); }
+    placeSb(sb, b);
+  };
+  const end = () => {
+    sb.removeEventListener('pointermove', move); sb.removeEventListener('pointerup', end); sb.removeEventListener('pointercancel', end);
+    stripDrag = false; tip.hidden = true; sb.classList.remove('drag');
+    if (moved) { rescaleWords(b, o); store.set('stripHintSeen', true); $('#strip-hint').hidden = true; changed(true); }
+  };
+  sb.addEventListener('pointermove', move); sb.addEventListener('pointerup', end); sb.addEventListener('pointercancel', end);
+});
+// כשמשנים זמנים של שורה — מתאימים את זמני המילים (בשביל הדגשת המילה)
+function rescaleWords(b, o) {
+  if (!b.words || !b.words.length) return;
+  const k = (b.end - b.start) / Math.max(0.01, o.end - o.start);
+  b.words = b.words.map((w) => ({ ...w, start: b.start + (w.start - o.start) * k, end: b.start + (w.end - o.start) * k }));
+}
+function scrollListTo(b) { const el = document.querySelector(`.blk[data-id="${b.id}"]`); if (el) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
+if (store.get('stripHintSeen', false)) $('#strip-hint').hidden = true;
+window.addEventListener('resize', () => renderStrip());
+
 function changed(rerender) { S.edited = true; if (rerender) renderBlocks(); draw(); save(); }
 let saveT;
 function saveSoon() { clearTimeout(saveT); saveT = setTimeout(save, 600); }
@@ -441,7 +535,7 @@ async function transcribe() {
   let lock = null; try { lock = await navigator.wakeLock.request('screen'); } catch {}
   txStatus('מכין את האודיו…', 0);
   try {
-    const pcm = await decodePcm(S.file);
+    const pcm = (S.pcmP && await S.pcmP) || await decodePcm(S.file);
     if (useServer()) { if (!(await transcribeOnServer(pcm, key))) { S.busy = false; txStatus(null); return; } }
     else {
     const parts = chunkPoints(pcm, 20, 28);

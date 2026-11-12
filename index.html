@@ -46,6 +46,16 @@
       <input id="seek" type="range" min="0" max="1" step="0.01" value="0" dir="ltr">
       <span id="time" class="time">0:00 / 0:00</span>
     </div>
+    <!-- פס זמן: גוררים את הקצוות של כל שורה כדי לשנות מתי היא מתחילה ונגמרת -->
+    <div class="strip-wrap">
+      <div class="strip" id="strip" dir="ltr">
+        <div class="strip-inner" id="strip-inner"><div id="strip-wave"></div><div id="strip-blocks"></div></div>
+      </div>
+      <div class="strip-playhead"></div>
+      <div class="strip-zoom" dir="ltr"><button id="zoom-out" aria-label="הקטנה">−</button><button id="zoom-in" aria-label="הגדלה">+</button></div>
+      <div id="strip-tip" class="strip-tip" hidden></div>
+    </div>
+    <p id="strip-hint" class="strip-hint">גררו את הידיות ◀▶ בקצוות של שורה כדי לשנות מתי היא מתחילה ונגמרת · החליקו את הפס כדי לזוז בסרטון</p>
     <details class="style-box" open>
       <summary>🎨 עיצוב הכתוביות</summary>
       <div class="style-grid">
