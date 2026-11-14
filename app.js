@@ -546,9 +546,10 @@ function renderRecent() {
   for (const p of list) {
     const row = document.createElement('div'); row.className = 'recent-row';
     const when = new Date(p.at || 0).toLocaleDateString('he-IL', { day: 'numeric', month: 'numeric' });
+    const parts = p.k.slice('subs.proj:'.length).split('|'); // שם|גודל|אורך — לפרויקטים ששמרה גרסה ישנה
     row.innerHTML = '<span class="rn"></span><span class="rm"></span>';
-    row.querySelector('.rn').textContent = p.name || 'סרטון';
-    row.querySelector('.rm').textContent = `${fmt(p.dur || 0, 0)} · ${(p.blocks || []).length} שורות · ${when}`;
+    row.querySelector('.rn').textContent = p.name || parts[0] || 'סרטון';
+    row.querySelector('.rm').textContent = `${fmt(p.dur || +parts[2] || 0, 0)} · ${(p.blocks || []).length} שורות · ${when}`;
     box.appendChild(row);
   }
 }
@@ -557,7 +558,7 @@ $('#search').addEventListener('input', renderBlocks);
 /* ---------- תמלול ---------- */
 let worker = null, seq = 0;
 function workerRun(audio, onEvent) {
-  if (!worker) worker = new Worker('worker.js', { type: 'module' });
+  if (!worker) worker = new Worker('worker.js?v=202611142014', { type: 'module' });
   const id = ++seq;
   return new Promise((res, rej) => {
     worker.onmessage = (e) => {
