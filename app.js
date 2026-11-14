@@ -624,7 +624,7 @@ $('#search').addEventListener('input', renderBlocks);
 /* ---------- תמלול ---------- */
 let worker = null, seq = 0;
 function workerRun(audio, onEvent) {
-  if (!worker) worker = new Worker('worker.js?v=202611142029', { type: 'module' });
+  if (!worker) worker = new Worker('worker.js?v=202611142041', { type: 'module' });
   const id = ++seq;
   return new Promise((res, rej) => {
     worker.onmessage = (e) => {
@@ -1136,6 +1136,31 @@ $('#btn-new').onclick = () => {
   if (S.busy) { worker && worker.terminate(); worker = null; S.busy = false; txStatus(null); }
   resetVideo(); S.key = ''; $('#editor').hidden = true; $('#start').hidden = false; $('#btn-new').hidden = true; renderRecent();
 };
+/* ---------- מסך מלא לצפייה בסרטון ---------- */
+const wrapEl = $('#screen-wrap');
+const isFull = () => document.fullscreenElement === wrapEl || wrapEl.classList.contains('fake-full');
+async function enterFull() {
+  try {
+    if (!wrapEl.requestFullscreen) throw new Error('no fullscreen');
+    // אם הדפדפן לא עונה תוך שנייה וחצי — עוברים לחלופה
+    await Promise.race([wrapEl.requestFullscreen({ navigationUI: 'hide' }), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 1500))]);
+    if (document.fullscreenElement !== wrapEl) throw new Error('not full');
+    // סרטון רוחבי — מסובבים לרוחב
+    if (S.video && S.video.videoWidth > S.video.videoHeight && screen.orientation && screen.orientation.lock) screen.orientation.lock('landscape').catch(() => {});
+  } catch { wrapEl.classList.add('fake-full'); document.body.style.overflow = 'hidden'; } // דפדפן בלי מסך מלא (למשל אייפון)
+  syncFullBtn();
+}
+async function exitFull() {
+  if (document.fullscreenElement) { try { await document.exitFullscreen(); } catch {} }
+  wrapEl.classList.remove('fake-full'); document.body.style.overflow = '';
+  try { screen.orientation && screen.orientation.unlock && screen.orientation.unlock(); } catch {}
+  syncFullBtn();
+}
+function syncFullBtn() { const f = isFull(); $('#btn-full').textContent = f ? '✕' : '⛶'; $('#btn-full').title = f ? 'יציאה ממסך מלא' : 'מסך מלא'; setTimeout(draw, 50); }
+$('#btn-full').onclick = (e) => { e.stopPropagation(); isFull() ? exitFull() : enterFull(); };
+document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement) wrapEl.classList.remove('fake-full'); syncFullBtn(); });
+window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && wrapEl.classList.contains('fake-full')) exitFull(); });
+
 $('#btn-play').onclick = togglePlay;
 $('#big-play').onclick = togglePlay;
 cv.addEventListener('click', togglePlay);

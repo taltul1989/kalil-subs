@@ -10,7 +10,7 @@
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=202611142029">
+<link rel="stylesheet" href="style.css?v=202611142041">
 </head>
 <body>
 <header class="top">
@@ -41,7 +41,7 @@
 <!-- עורך -->
 <main id="editor" class="editor" hidden>
   <section class="stage">
-    <div class="screen-wrap"><canvas id="screen"></canvas><button id="big-play" class="big-play" aria-label="נגן">▶</button></div>
+    <div class="screen-wrap" id="screen-wrap"><canvas id="screen"></canvas><button id="big-play" class="big-play" aria-label="נגן">▶</button><button id="btn-full" class="full-btn" aria-label="מסך מלא" title="מסך מלא">⛶</button></div>
     <div class="transport">
       <button id="btn-play" class="btn play" aria-label="נגן / עצור">▶</button>
       <input id="seek" type="range" min="0" max="1" step="0.01" value="0" dir="ltr">
@@ -194,6 +194,6 @@
 <div id="drop-overlay" class="drop-overlay" hidden><div>שחררו כאן 🎬</div></div>
 <div id="toast" class="toast" hidden></div>
 
-<script src="app.js?v=202611142029"></script>
+<script src="app.js?v=202611142041"></script>
 </body>
 </html>
