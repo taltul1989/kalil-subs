@@ -60,7 +60,10 @@ async function loadFile(f) {
   if (!isFinite(v.duration)) { await new Promise((r) => { v.ondurationchange = () => isFinite(v.duration) && r(); v.currentTime = 1e7; setTimeout(r, 4000); }); v.currentTime = 0; }
   S.file = f; S.video = v; S.dur = v.duration;
   S.key = `${f.name}|${f.size}|${Math.round(S.dur)}`;
-  v.addEventListener('seeked', () => { if (!S.playing) draw(); updateTime(); });
+  v.addEventListener('seeked', () => {
+    if (pendingSeek != null) { const t = pendingSeek; pendingSeek = null; v.currentTime = t; } // הגרירה התקדמה בינתיים
+    if (!S.playing) draw(); updateTime();
+  });
   v.addEventListener('loadeddata', () => draw());
   v.addEventListener('ended', onEnded);
   sizeCanvas();
@@ -71,10 +74,10 @@ async function loadFile(f) {
   S.pcmP.then((p) => { if (p && S.file === f) { computePeaks(p); drawWave(); } });
   if (matchMedia('(max-width: 860px)').matches) $('.style-box').open = false;
   $('#seek').max = S.dur; updateTime();
-  const saved = store.get('proj:' + S.key, null);
-  if (saved && saved.blocks && saved.blocks.length) {
+  const saved = findSaved(S.key);
+  if (saved && saved.blocks && saved.blocks.length && !(saved.partial && !saved.edited)) {
     S.words = saved.words || []; S.blocks = saved.blocks; S.edited = !!saved.edited;
-    renderBlocks(); draw(); toast('נטען התמלול ששמרתם לסרטון הזה ✓');
+    renderBlocks(); draw(); save(); toast('העבודה ששמרת לסרטון הזה נטענה ✓');
   } else {
     S.words = []; S.blocks = []; S.edited = false; renderBlocks();
     transcribe();
@@ -114,7 +117,10 @@ function play() {
   S.video.play().catch(() => {});
   S.playing = true; uiPlay(); frameLoop();
 }
-function pause() { if (S.video) S.video.pause(); S.playing = false; uiPlay(); draw(); }
+function pause() {
+  if (S.exporting) return; // בזמן הורדה שום דבר לא עוצר את הסרטון
+  if (S.video) S.video.pause(); S.playing = false; uiPlay(); draw();
+}
 function togglePlay() { S.playing ? pause() : play(); }
 function seek(t) { if (!S.video) return; S.video.currentTime = clamp(t, 0, S.dur); updateTime(); }
 function onEnded() { S.playing = false; uiPlay(); if (S.exporting) finishExport(); }
@@ -233,7 +239,7 @@ function groupWords(words, maxChars) {
   });
   return blocks;
 }
-function regroup() { S.blocks = groupWords(S.words, +settings.len); renderBlocks(); draw(); save(); }
+function regroup() { S.blocks = groupWords(S.words, +settings.len); renderBlocks(); draw(); save(); save(); }
 
 /* ---------- רשימת הכתוביות ---------- */
 function renderBlocks() {
@@ -393,16 +399,77 @@ function renderStrip() {
 }
 function placeSb(el, b, P = stripPad()) { el.style.left = P + b.start * Z + 'px'; el.style.width = Math.max(8, (b.end - b.start) * Z) + 'px'; }
 function syncStrip(force) {
-  if (!S.video || stripDrag) return;
+  if (!S.video || stripDrag || pan || glide) return; // בזמן שהאצבע מזיזה את הפס — לא נלחמים בה
   const x = S.video.currentTime * Z;
   if (force || Math.abs(strip.scrollLeft - x) > 1) { progScrollAt = performance.now(); strip.scrollLeft = x; }
 }
-// החלקה על הפס = תזוזה בסרטון (הקו הצהוב באמצע הוא "עכשיו")
-strip.addEventListener('pointerdown', (e) => { if (!e.target.closest('.sb-h') && S.playing) pause(); });
-strip.addEventListener('scroll', () => {
-  if (stripDrag || performance.now() - progScrollAt < 120 || !S.video) return;
+// החלקה על הפס = תזוזה בסרטון (הקו הצהוב באמצע הוא "עכשיו").
+// חשוב: מגיבים רק לגלילה של אצבע/עכבר אמיתיים — לא לגלילה שהאתר עצמו עושה בזמן ניגון
+// (אחרת, כשהטלפון עמוס, אירוע גלילה מאוחר היה עוצר את הסרטון ואת הייצוא).
+// גרירה חופשית על כל הפס (גם על השורות): האצבע מזיזה את הפס, ושחרור עם תנופה ממשיך לגלוש
+let pan = null, glide = 0, pendingSeek = null;
+function scrubTo(t) {                      // הזזת הסרטון בלי "להיתקע": בקשה אחת בכל פעם, האחרונה מנצחת
+  if (!S.video) return;
+  pendingSeek = clamp(t, 0, S.dur);
+  if (!S.video.seeking) { S.video.currentTime = pendingSeek; pendingSeek = null; }
+}
+function setStripPos(x) {
+  x = clamp(x, 0, S.dur * Z);
+  progScrollAt = performance.now(); strip.scrollLeft = x;
+  scrubTo(x / Z);
+}
+function stopGlide() { if (glide) cancelAnimationFrame(glide); glide = 0; }
+function startGlide(v) {                   // v = פיקסלים למילישנייה
+  stopGlide();
+  let last = performance.now();
+  const step = (now) => {
+    const dt = Math.min(40, now - last); last = now;
+    v *= Math.pow(0.94, dt / 16);
+    if (Math.abs(v) < 0.02) { glide = 0; return; }
+    setStripPos(strip.scrollLeft + v * dt);
+    glide = requestAnimationFrame(step);
+  };
+  glide = requestAnimationFrame(step);
+}
+strip.addEventListener('pointerdown', (e) => {
+  if (S.exporting || e.target.closest('.sb-h') || e.target.closest('.strip-zoom') || (e.button && e.button > 0)) return;
+  e.preventDefault();
+  stopGlide();
   if (S.playing) pause();
-  S.video.currentTime = clamp(strip.scrollLeft / Z, 0, S.dur);
+  pan = { id: e.pointerId, x0: e.clientX, s0: strip.scrollLeft, lx: e.clientX, lt: performance.now(), v: 0, moved: false, target: e.target };
+  try { strip.setPointerCapture(e.pointerId); } catch {}
+});
+strip.addEventListener('pointermove', (e) => {
+  if (!pan || e.pointerId !== pan.id) return;
+  const dx = e.clientX - pan.x0;
+  if (!pan.moved && Math.abs(dx) < 5) return;
+  pan.moved = true;
+  setStripPos(pan.s0 - dx);
+  const now = performance.now(), dt = now - pan.lt;
+  if (dt > 0) pan.v = 0.75 * pan.v + 0.25 * ((pan.lx - e.clientX) / dt);
+  pan.lx = e.clientX; pan.lt = now;
+});
+const endPan = (e) => {
+  if (!pan || e.pointerId !== pan.id) return;
+  const p = pan; pan = null;
+  if (!p.moved) { // הקשה: קופצים לשורה שנלחצה, או לנקודה שנלחצה
+    const sb = p.target.closest && p.target.closest('.sb');
+    const b = sb && S.blocks.find((x) => x.id === sb.dataset.id);
+    if (b) { seek(b.start + 0.01); scrollListTo(b); }
+    else { const r = strip.getBoundingClientRect(); seek((strip.scrollLeft + e.clientX - r.left - stripPad()) / Z); }
+    return;
+  }
+  if (e.type === 'pointerup' && performance.now() - p.lt < 80 && Math.abs(p.v) > 0.1) startGlide(p.v);
+};
+strip.addEventListener('pointerup', endPan);
+strip.addEventListener('pointercancel', endPan);
+// גלגלת עכבר / משטח מגע במחשב — גלילה רגילה
+let wheelUntil = 0;
+strip.addEventListener('wheel', () => { if (!S.exporting) { stopGlide(); wheelUntil = performance.now() + 500; } }, { passive: true });
+strip.addEventListener('scroll', () => {
+  if (stripDrag || pan || glide || !S.video || S.exporting || performance.now() > wheelUntil) return;
+  if (S.playing) pause();
+  scrubTo(strip.scrollLeft / Z);
 });
 function setZoom(z) { Z = clamp(z, 20, 400); renderStrip(); }
 $('#zoom-in').onclick = () => setZoom(Z * 1.5);
@@ -413,10 +480,7 @@ stripBlocks.addEventListener('pointerdown', (e) => {
   const i = S.blocks.findIndex((x) => x.id === sb.dataset.id), b = S.blocks[i]; if (!b) return;
   const edge = e.target.closest('.sb-h') && e.target.closest('.sb-h').dataset.e;
   const x0 = e.clientX;
-  if (!edge) { // לחיצה על השורה עצמה: קופצים אליה (גרירה רגילה = גלילה של הפס)
-    const up = (ev) => { window.removeEventListener('pointerup', up); if (Math.abs(ev.clientX - x0) < 8) { pause(); seek(b.start + 0.01); scrollListTo(b); } };
-    window.addEventListener('pointerup', up); return;
-  }
+  if (!edge) return; // לחיצה/גרירה על גוף השורה מטופלת בגרירת הפס
   if (S.busy) return toast('אפשר לערוך אחרי שהתמלול יסתיים');
   e.preventDefault(); e.stopPropagation();
   pause(); stripDrag = true; sb.classList.add('drag');
@@ -451,7 +515,43 @@ window.addEventListener('resize', () => renderStrip());
 function changed(rerender) { S.edited = true; if (rerender) renderBlocks(); draw(); save(); }
 let saveT;
 function saveSoon() { clearTimeout(saveT); saveT = setTimeout(save, 600); }
-function save() { if (S.key) store.set('proj:' + S.key, { words: S.words, blocks: S.blocks, edited: S.edited, at: Date.now() }); }
+function save() {
+  if (!S.key || !S.blocks.length) return;
+  const data = { words: S.words, blocks: S.blocks, edited: S.edited, at: Date.now(), name: S.file && S.file.name, dur: S.dur, partial: !!S.busy };
+  try { localStorage.setItem('subs.proj:' + S.key, JSON.stringify(data)); }
+  catch { pruneProjects(5); try { localStorage.setItem('subs.proj:' + S.key, JSON.stringify(data)); } catch { toast('אין מקום לשמור בדפדפן — הורידו SRT כגיבוי', 5000); } }
+  pruneProjects(25);
+}
+// שומרים רק את הפרויקטים האחרונים, כדי לא למלא את הזיכרון של הדפדפן
+function listProjects() {
+  const out = [];
+  try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.startsWith('subs.proj:')) { try { const p = JSON.parse(localStorage.getItem(k)); out.push({ k, ...p }); } catch {} } } } catch {}
+  return out.sort((a, b) => (b.at || 0) - (a.at || 0));
+}
+function pruneProjects(keep) { listProjects().slice(keep).forEach((p) => { try { if (p.k !== 'subs.proj:' + S.key) localStorage.removeItem(p.k); } catch {} }); }
+// מוצאים עבודה שמורה גם אם הגלריה נתנה לקובץ שם אחר (לפי גודל + אורך)
+function findSaved(key) {
+  const direct = store.get('proj:' + key, null); if (direct) return direct;
+  const tail = key.slice(key.indexOf('|'));
+  const hit = listProjects().find((p) => p.k.endsWith(tail));
+  if (hit) { try { localStorage.removeItem(hit.k); } catch {} delete hit.k; return hit; }
+  return null;
+}
+function renderRecent() {
+  const box = $('#recent'); if (!box) return;
+  const list = listProjects().slice(0, 5);
+  box.hidden = !list.length;
+  if (!list.length) return;
+  box.innerHTML = '<div class="recent-title">להמשיך מאיפה שעצרת</div><p class="note">העבודה שמורה. בחרו שוב את אותו סרטון — הכתוביות והתיקונים ייטענו מעצמם.</p>';
+  for (const p of list) {
+    const row = document.createElement('div'); row.className = 'recent-row';
+    const when = new Date(p.at || 0).toLocaleDateString('he-IL', { day: 'numeric', month: 'numeric' });
+    row.innerHTML = '<span class="rn"></span><span class="rm"></span>';
+    row.querySelector('.rn').textContent = p.name || 'סרטון';
+    row.querySelector('.rm').textContent = `${fmt(p.dur || 0, 0)} · ${(p.blocks || []).length} שורות · ${when}`;
+    box.appendChild(row);
+  }
+}
 $('#search').addEventListener('input', renderBlocks);
 
 /* ---------- תמלול ---------- */
@@ -553,7 +653,7 @@ async function transcribe() {
       });
       doneSec = b / 16000;
       S.words.push(...resToWords(d, a / 16000, (b - a) / 16000));
-      S.blocks = groupWords(S.words, +settings.len); renderBlocks(); draw();
+      S.blocks = groupWords(S.words, +settings.len); renderBlocks(); draw(); save();
     }
     }
     for (let i = 1; i < S.words.length; i++) if (S.words[i].start < S.words[i - 1].start) S.words[i].start = S.words[i - 1].start;
@@ -627,7 +727,7 @@ async function transcribeOnServer(pcm, key) {
     txStatus(`מתמלל… ${Math.round((pct + span) * 100)}%`, pct + span);
     const off = a / 16000;
     S.words.push(...cleanWords(d.words.map((w) => ({ text: w.text, start: off + w.start, end: off + w.end }))));
-    S.blocks = groupWords(S.words, +settings.len); renderBlocks(); draw();
+    S.blocks = groupWords(S.words, +settings.len); renderBlocks(); draw(); save();
     console.log(`server chunk ${i + 1}/${parts.length}: ${((b - a) / 16000).toFixed(0)}s audio in ${((performance.now() - t0) / 1000).toFixed(1)}s`);
   }
   return true;
@@ -772,14 +872,30 @@ async function exportVideo() {
   S.video.currentTime = 0;
   await new Promise((r) => S.video.addEventListener('seeked', r, { once: true }));
   draw(); rec.start(500);
+  stopAt = null;
   S.video.play(); frameLoop();
+  // שומר: אם הסרטון נעצר באמצע ההורדה — מפעילים מחדש; אם הוא תקוע לגמרי — הודעה ברורה במקום המתנה אינסופית
+  let lastT = -1, still = 0;
+  S.exporting.watch = setInterval(() => {
+    const ex = S.exporting; if (!ex) return;
+    const v = S.video;
+    if (v.ended) return;
+    if (v.paused) v.play().catch(() => {});
+    if (Math.abs(v.currentTime - lastT) < 0.05) still++; else still = 0;
+    lastT = v.currentTime;
+    if (still >= 12) { ex.cancelled = true; ex.failed = true; v.pause(); finishExport(); }
+  }, 1000);
 }
 function finishExport() {
   const ex = S.exporting; if (!ex) return;
+  clearInterval(ex.watch);
   S.exporting = null; speaker.gain.value = 1;
   try { ex.lock && ex.lock.release(); } catch {}
   ex.rec.onstop = () => {
-    if (ex.cancelled) { $('#export-overlay').hidden = true; return toast('בוטל'); }
+    if (ex.cancelled) {
+      $('#export-overlay').hidden = true;
+      return toast(ex.failed ? 'ההורדה נתקעה ונעצרה. העבודה שלך שמורה — נסו שוב, או הורידו קובץ SRT' : 'בוטל', ex.failed ? 7000 : 2800);
+    }
     const ext = ex.mime.includes('mp4') ? 'mp4' : 'webm';
     const base = S.file.name.replace(/\.[^.]+$/, '');
     const name = `${base}-כתוביות.${ext}`;
@@ -852,7 +968,7 @@ $('#file').onchange = (e) => { loadFile(e.target.files[0]); e.target.value = '';
 $('#btn-new').onclick = () => {
   if (S.busy && !confirm('התמלול עוד רץ. לעצור ולבחור סרטון אחר?')) return;
   if (S.busy) { worker && worker.terminate(); worker = null; S.busy = false; txStatus(null); }
-  resetVideo(); S.key = ''; $('#editor').hidden = true; $('#start').hidden = false; $('#btn-new').hidden = true;
+  resetVideo(); S.key = ''; $('#editor').hidden = true; $('#start').hidden = false; $('#btn-new').hidden = true; renderRecent();
 };
 $('#btn-play').onclick = togglePlay;
 $('#big-play').onclick = togglePlay;
@@ -873,4 +989,5 @@ window.addEventListener('keydown', (e) => {
 });
 window.addEventListener('beforeunload', (e) => { if (S.busy || S.exporting) { e.preventDefault(); e.returnValue = ''; } });
 
+renderRecent();
 window.__subs = { S, loadFile, settings };
