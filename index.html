@@ -10,7 +10,7 @@
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=202611142041">
+<link rel="stylesheet" href="style.css?v=202611142101">
 </head>
 <body>
 <header class="top">
@@ -39,9 +39,9 @@
 </main>
 
 <!-- עורך -->
-<main id="editor" class="editor" hidden>
+<main id="editor" class="editor" data-mtab="subs" hidden>
   <section class="stage">
-    <div class="screen-wrap" id="screen-wrap"><canvas id="screen"></canvas><button id="big-play" class="big-play" aria-label="נגן">▶</button><button id="btn-full" class="full-btn" aria-label="מסך מלא" title="מסך מלא">⛶</button></div>
+    <div class="screen-wrap" id="screen-wrap"><canvas id="screen"></canvas><button id="big-play" class="big-play" aria-label="נגן">▶</button><button id="btn-full" class="full-btn" aria-label="מסך מלא" title="מסך מלא">⛶</button><span id="vtime" class="vtime">0:00 / 0:00</span></div>
     <div class="transport">
       <button id="btn-play" class="btn play" aria-label="נגן / עצור">▶</button>
       <input id="seek" type="range" min="0" max="1" step="0.01" value="0" dir="ltr">
@@ -58,6 +58,11 @@
     </div>
     <div id="tracks-bar" class="tracks-bar"></div>
     <p id="strip-hint" class="strip-hint">גררו את הידיות ◀▶ בקצוות של שורה כדי לשנות מתי היא מתחילה ונגמרת · החליקו את הפס כדי לזוז בסרטון</p>
+    <div class="mtabs" id="mtabs" role="tablist">
+      <button type="button" data-tab="subs" class="on" role="tab">📝 כתוביות</button>
+      <button type="button" data-tab="style" role="tab">🎨 עיצוב</button>
+      <button type="button" id="btn-add2" class="madd" title="הוספת שורה בנקודה שבה הסרטון עומד">➕ שורה</button>
+    </div>
     <details class="style-box" open>
       <summary>🎨 עיצוב הכתוביות<span id="style-for" class="style-for"></span></summary>
       <div class="style-grid">
@@ -194,6 +199,6 @@
 <div id="drop-overlay" class="drop-overlay" hidden><div>שחררו כאן 🎬</div></div>
 <div id="toast" class="toast" hidden></div>
 
-<script src="app.js?v=202611142041"></script>
+<script src="app.js?v=202611142101"></script>
 </body>
 </html>

@@ -72,7 +72,7 @@ async function loadFile(f) {
   peaks = null;
   S.pcmP = decodePcm(f).catch(() => null);
   S.pcmP.then((p) => { if (p && S.file === f) { computePeaks(p); drawWave(); } });
-  if (matchMedia('(max-width: 860px)').matches) $('.style-box').open = false;
+  setMTab('subs'); mobileHintOnce(); // בטלפון מתחילים בלשונית הכתוביות
   $('#seek').max = S.dur; updateTime();
   const saved = findSaved(S.key);
   if (saved && saved.blocks && saved.blocks.length && !(saved.partial && !saved.edited)) {
@@ -134,7 +134,7 @@ function uiPlay() { const p = S.playing; $('#btn-play').textContent = p ? '⏸' 
 let lastCur = null;
 function updateTime(follow) {
   const t = S.video ? S.video.currentTime : 0;
-  $('#time').textContent = `${fmt(t, 0)} / ${fmt(S.dur, 0)}`;
+  $('#time').textContent = $('#vtime').textContent = `${fmt(t, 0)} / ${fmt(S.dur, 0)}`;
   if (document.activeElement !== $('#seek')) $('#seek').value = t;
   const b = blockAt(t);
   syncStrip();
@@ -307,10 +307,10 @@ function renderBlocks() {
       <div class="blk-text" dir="auto" contenteditable="${S.busy ? 'false' : 'true'}" spellcheck="false"></div>
       <div class="blk-acts">
         <button data-a="play">▶ נגן</button>
-        <button data-a="split" title="חיתוך השורה במקום של הסמן">✂ פצל כאן</button>
-        <button data-a="merge" title="איחוד עם השורה הבאה">⤓ אחד עם הבאה</button>
+        <button data-a="split" title="חיתוך השורה במקום של הסמן">✂ פצל</button>
+        <button data-a="merge" title="איחוד עם השורה הבאה">⤓ אחד</button>
         <button data-a="add" title="הוספת שורה חדשה אחרי השורה הזו">➕ אחרי</button>
-        <button data-a="del" class="del">🗑</button>
+        <button data-a="del" class="del">🗑 מחק</button>
       </div>`;
     el.querySelector('.blk-text').textContent = b.text;
     if (multi) el.querySelector('.tag').textContent = '● ' + T.name;
@@ -445,7 +445,7 @@ function renderStrip() {
   if (!S.video) return;
   const P = stripPad(), n = settings.tracks.length;
   // כמה דוברים = כמה שורות בפס; הפס גדל בהתאם
-  const rowH = n === 1 ? 0 : (matchMedia('(max-width: 860px)').matches ? 28 : 32);
+  const rowH = n === 1 ? 0 : (matchMedia('(max-width: 860px)').matches ? 24 : 32);
   const wantH = n === 1 ? '' : 12 + n * rowH + 'px';
   if (strip.style.height !== wantH) { strip.style.height = wantH; }
   stripInner.style.width = S.dur * Z + 2 * P + 'px';
@@ -624,7 +624,7 @@ $('#search').addEventListener('input', renderBlocks);
 /* ---------- תמלול ---------- */
 let worker = null, seq = 0;
 function workerRun(audio, onEvent) {
-  if (!worker) worker = new Worker('worker.js?v=202611142041', { type: 'module' });
+  if (!worker) worker = new Worker('worker.js?v=202611142101', { type: 'module' });
   const id = ++seq;
   return new Promise((res, rej) => {
     worker.onmessage = (e) => {
@@ -1136,6 +1136,24 @@ $('#btn-new').onclick = () => {
   if (S.busy) { worker && worker.terminate(); worker = null; S.busy = false; txStatus(null); }
   resetVideo(); S.key = ''; $('#editor').hidden = true; $('#start').hidden = false; $('#btn-new').hidden = true; renderRecent();
 };
+/* ---------- לשוניות בטלפון: כתוביות / עיצוב (הטיימליין תמיד גלוי מעליהן) ---------- */
+function setMTab(tab) {
+  $('#editor').dataset.mtab = tab;
+  document.querySelectorAll('#mtabs button').forEach((b) => { const on = b.dataset.tab === tab; b.classList.toggle('on', on); b.setAttribute('aria-selected', on); });
+  if (tab === 'style') $('.style-box').open = true;
+}
+$('#mtabs').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.id === 'btn-add2') { setMTab('subs'); return addBlockAt(S.video ? S.video.currentTime : 0); }
+  setMTab(b.dataset.tab);
+});
+// בטלפון ההסבר על הטיימליין מופיע פעם אחת כהודעה, ולא תופס מקום קבוע
+function mobileHintOnce() {
+  if (!matchMedia('(max-width: 860px)').matches || store.get('stripHintSeen', false)) return;
+  store.set('stripHintSeen', true);
+  setTimeout(() => toast('טיפ: גוררים את הטיימליין כדי לזוז בסרטון, ואת הידיות ◀▶ בקצוות של שורה כדי לשנות מתי היא מתחילה ונגמרת', 7000), 1200);
+}
+
 /* ---------- מסך מלא לצפייה בסרטון ---------- */
 const wrapEl = $('#screen-wrap');
 const isFull = () => document.fullscreenElement === wrapEl || wrapEl.classList.contains('fake-full');
