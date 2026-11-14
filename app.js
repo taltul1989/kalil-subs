@@ -157,12 +157,54 @@ function updateTime(follow) {
 /* ---------- ציור + כתוביות ---------- */
 const cv = $('#screen'), cx = cv.getContext('2d');
 const blockAt = (t) => S.blocks.find((b) => t >= b.start && t < b.end) || null;
+
+/* ---------- דוברים: כל דובר = טיימליין משלו עם עיצוב משלו ---------- */
+const TRACK_COLORS = ['#FFFFFF', '#5CE1E6', '#FF8FD8', '#7CFF8A', '#FFD60A', '#FFA24D'];
+const tr = (b) => b.track || 0;
+function ensureTracks() {
+  if (!Array.isArray(settings.tracks) || !settings.tracks.length) {
+    // מעבר מהגרסה הקודמת: העיצוב הכללי הופך לעיצוב של דובר 1
+    const old = settings.style === 'yellow' ? { style: 'bold', color: '#FFD60A' } : { style: settings.style === 'box' ? 'box' : 'bold', color: '#FFFFFF' };
+    settings.tracks = [{ name: 'דובר 1', ...old, pos: settings.pos || 'bottom', size: settings.size || 6, karaoke: settings.karaoke !== false }];
+    saveSettings();
+  }
+}
+ensureTracks();
+S.activeTrack = 0;
+const tracks = () => settings.tracks;
+const curTrack = () => settings.tracks[S.activeTrack] || settings.tracks[0];
+function newTrack() {
+  const i = settings.tracks.length;
+  settings.tracks.push({ name: `דובר ${i + 1}`, style: 'bold', color: TRACK_COLORS[i % TRACK_COLORS.length], pos: i % 2 ? 'top' : 'bottom', size: settings.tracks[0].size, karaoke: true });
+  saveSettings();
+  return i;
+}
+// פרויקט ששמר שורות לדובר 3 — מוודאים שיש מספיק דוברים
+function ensureTrackCount() { const max = S.blocks.reduce((m, b) => Math.max(m, tr(b)), 0); while (settings.tracks.length <= max) newTrack(); if (S.activeTrack >= settings.tracks.length) S.activeTrack = 0; }
+function neighbors(b) { const list = S.blocks.filter((x) => tr(x) === tr(b)); const i = list.indexOf(b); return { prev: list[i - 1], next: list[i + 1] }; }
+const sortBlocks = () => S.blocks.sort((a, b) => a.start - b.start || tr(a) - tr(b));
+
 function draw() {
   const v = S.video; if (!v) return;
   cx.fillStyle = '#000'; cx.fillRect(0, 0, cv.width, cv.height);
   if (v.readyState >= 2 && v.videoWidth) cx.drawImage(v, 0, 0, cv.width, cv.height);
-  const b = blockAt(v.currentTime);
-  if (b && b.text.trim()) drawCaption(b, v.currentTime);
+  const t = v.currentTime;
+  // כתובית לכל דובר שמדבר עכשיו; דוברים באותו מיקום נערמים אחד מעל השני
+  const used = { top: 0, middle: 0, bottom: 0 };
+  const layouts = [];
+  settings.tracks.forEach((st, r) => {
+    const b = S.blocks.find((x) => tr(x) === r && t >= x.start && t < x.end && x.text.trim());
+    if (b) layouts.push({ b, st, L: layoutCaption(b, st) });
+  });
+  const midTotal = layouts.filter((x) => x.st.pos === 'middle').reduce((a, x) => a + x.L.blockH, 0);
+  for (const x of layouts) {
+    const H = cv.height, gap = x.L.fs * 0.3, p = x.st.pos;
+    let y0;
+    if (p === 'top') { y0 = H * 0.09 + used.top; used.top += x.L.blockH + gap; }
+    else if (p === 'middle') { y0 = (H - midTotal) / 2 + used.middle; used.middle += x.L.blockH + gap; }
+    else { y0 = H * 0.88 - x.L.blockH - used.bottom; used.bottom += x.L.blockH + gap; }
+    paintCaption(x.L, y0, x.st, t);
+  }
 }
 function blockWords(b) {
   // מילים עם זמנים — מהמודל, או מחולקות לפי אורך אם הטקסט נערך
@@ -171,15 +213,13 @@ function blockWords(b) {
   const total = parts.reduce((a, p) => a + p.length + 1, 0); let t = b.start;
   return parts.map((p) => { const d = (b.end - b.start) * (p.length + 1) / total; const w = { text: p, start: t, end: t + d }; t += d; return w; });
 }
-function drawCaption(b, t) {
+// מחשבים איך הכתובית נשברת לשורות (לפי העיצוב של הדובר)
+function layoutCaption(b, st) {
   const W = cv.width, H = cv.height;
-  const fs = Math.round(Math.min(W, H) * settings.size / 100 * 1.5);
+  const fs = Math.round(Math.min(W, H) * st.size / 100 * 1.5);
   cx.font = `800 ${fs}px Rubik, "Segoe UI", Arial, sans-serif`;
-  cx.textBaseline = 'middle';
-  const rtl = HEB.test(b.text);
   const words = blockWords(b);
   const space = cx.measureText(' ').width, maxW = W * 0.86;
-  // שבירת שורות
   const lines = []; let line = [], lw = 0;
   for (const w of words) {
     const ww = cx.measureText(w.text).width;
@@ -187,11 +227,16 @@ function drawCaption(b, t) {
     line.push({ ...w, w: ww }); lw += (line.length > 1 ? space : 0) + ww;
   }
   if (line.length) lines.push({ words: line, w: lw });
-  const lh = fs * 1.28, blockH = lines.length * lh;
-  const y0 = settings.pos === 'top' ? H * 0.09 : settings.pos === 'middle' ? (H - blockH) / 2 : H * 0.88 - blockH;
-  const st = settings.style;
-  const base = st === 'yellow' ? '#FFD60A' : '#FFFFFF';
-  const hl = st === 'yellow' ? '#FFFFFF' : '#FFD60A';
+  const lh = fs * 1.28;
+  return { lines, lh, blockH: lines.length * lh, fs, space, rtl: HEB.test(b.text) };
+}
+function paintCaption(L, y0, stl, t) {
+  const W = cv.width, { lines, lh, fs, space, rtl } = L;
+  cx.font = `800 ${fs}px Rubik, "Segoe UI", Arial, sans-serif`;
+  cx.textBaseline = 'middle';
+  const st = stl.style;
+  const base = stl.color || '#FFFFFF';
+  const hl = base.toUpperCase() === '#FFD60A' ? '#FFFFFF' : '#FFD60A';
   lines.forEach((ln, i) => {
     const y = y0 + i * lh + lh / 2;
     if (st === 'box') {
@@ -202,7 +247,7 @@ function drawCaption(b, t) {
     // מציירים מילה-מילה: בעברית מימין לשמאל
     let x = rtl ? (W + ln.w) / 2 : (W - ln.w) / 2;
     for (const w of ln.words) {
-      const active = settings.karaoke && t >= w.start && t < w.end;
+      const active = stl.karaoke && t >= w.start && t < w.end;
       const wx = rtl ? x - w.w : x;
       cx.textAlign = 'left'; cx.direction = 'ltr';
       if (rtl) { cx.direction = 'rtl'; cx.textAlign = 'right'; }
@@ -244,6 +289,8 @@ function regroup() { S.blocks = groupWords(S.words, +settings.len); renderBlocks
 /* ---------- רשימת הכתוביות ---------- */
 function renderBlocks() {
   const box = $('#blocks');
+  const nBefore = settings.tracks.length; ensureTrackCount();
+  if (settings.tracks.length !== nBefore) { renderTracksBar(); syncStyleUI(); }
   if (!S.blocks.length) {
     box.innerHTML = S.busy ? '<div class="empty">הכתוביות יופיעו כאן תוך כדי התמלול…</div>' : '<div class="empty">לא זוהה דיבור בסרטון.</div>';
     renderStrip(); return;
@@ -254,7 +301,9 @@ function renderBlocks() {
     const el = document.createElement('div');
     el.className = 'blk' + (q && b.text.toLowerCase().includes(q) ? ' hit' : '');
     el.dataset.id = b.id;
-    el.innerHTML = `<div class="blk-top"><span class="tlbl">${fmt(b.start)} – ${fmt(b.end)}</span></div>
+    const multi = settings.tracks.length > 1, T = settings.tracks[tr(b)] || settings.tracks[0];
+    el.style.setProperty('--tc', T.color);
+    el.innerHTML = `<div class="blk-top">${multi ? `<button class="tag" data-a="track" title="העברה לדובר אחר"></button>` : ''}<span class="tlbl">${fmt(b.start)} – ${fmt(b.end)}</span></div>
       <div class="blk-text" dir="auto" contenteditable="${S.busy ? 'false' : 'true'}" spellcheck="false"></div>
       <div class="blk-acts">
         <button data-a="play">▶ נגן</button>
@@ -264,6 +313,8 @@ function renderBlocks() {
         <button data-a="del" class="del">🗑</button>
       </div>`;
     el.querySelector('.blk-text').textContent = b.text;
+    if (multi) el.querySelector('.tag').textContent = '● ' + T.name;
+    if (multi) el.classList.add('multi');
     box.appendChild(el);
   }
   lastCur = null; renderStrip(); updateTime();
@@ -276,15 +327,25 @@ blocksBox.addEventListener('click', (e) => {
   if (!a) { if (!e.target.closest('.blk-text')) { pause(); seek(b.start + 0.01); } return; }
   if (S.busy) return toast('אפשר לערוך אחרי שהתמלול יסתיים');
   if (a === 'play') { seek(b.start + 0.01); play(); stopAt = b.end; }
-  else if (a === 'merge') {
-    const next = S.blocks[i + 1]; if (!next) return;
+  else if (a === 'track') {
+    // העברת השורה לדובר הבא; אם היא חופפת לשורה של הדובר החדש — מקצרים אותה
+    const to = (tr(b) + 1) % settings.tracks.length, o = { start: b.start, end: b.end, track: tr(b) };
+    b.track = to;
+    const { prev, next } = neighbors(b);
+    if (prev && prev.end > b.start) b.start = prev.end;
+    if (next && next.start < b.end) b.end = next.start;
+    if (b.end - b.start < 0.3) { Object.assign(b, o); return toast(`אין מקום אצל ${settings.tracks[to].name} בזמן הזה — יש שם כבר שורה`); }
+    if (b.start !== o.start || b.end !== o.end) { rescaleWords(b, o); toast('השורה קוצרה כדי לא לחפוף לשורה אחרת של אותו דובר'); }
+    S.activeTrack = to; renderTracksBar(); changed(true);
+  } else if (a === 'merge') {
+    const next = neighbors(b).next; if (!next) return toast('אין שורה הבאה לאותו דובר');
     b.text = (b.text + ' ' + next.text).trim(); b.end = next.end;
     b.words = b.words && next.words ? b.words.concat(next.words) : null;
-    S.blocks.splice(i + 1, 1); changed(true);
+    S.blocks.splice(S.blocks.indexOf(next), 1); changed(true);
   } else if (a === 'add') {
-    const next = S.blocks[i + 1];
+    const next = neighbors(b).next;
     const gapAfter = (next ? next.start : S.dur) - b.end;
-    addBlockAt(gapAfter > 0.4 ? b.end : (b.start + b.end) / 2);
+    addBlockAt(gapAfter > 0.4 ? b.end : (b.start + b.end) / 2, tr(b));
   } else if (a === 'del') {
     S.blocks.splice(i, 1); changed(true); toast('השורה נמחקה');
   } else if (a === 'split') {
@@ -298,33 +359,32 @@ blocksBox.addEventListener('click', (e) => {
     const nLeft = left.split(/\s+/).length;
     const ws = blockWords(b);
     const mid = ws[nLeft] ? ws[nLeft].start : b.start + (b.end - b.start) * left.length / b.text.length;
-    const nb = { id: uid(), start: mid, end: b.end, text: right, words: b.words ? b.words.slice(nLeft) : null };
+    const nb = { id: uid(), start: mid, end: b.end, text: right, words: b.words ? b.words.slice(nLeft) : null, track: tr(b) };
     b.text = left; b.end = mid; b.words = b.words ? b.words.slice(0, nLeft) : null;
     S.blocks.splice(i + 1, 0, nb); changed(true);
   }
 });
 // הוספת שורה חדשה בנקודת זמן (למשל משפט שהתמלול פספס)
-function addBlockAt(t) {
+function addBlockAt(t, track = S.activeTrack) {
   if (!S.video) return;
   if (S.busy) return toast('אפשר להוסיף שורות אחרי שהתמלול יסתיים');
   pause();
   t = clamp(t, 0, S.dur);
-  let idx = S.blocks.findIndex((b) => t >= b.start && t < b.end);
+  const mine = S.blocks.filter((b) => tr(b) === track); // רק השורות של הדובר הזה
+  const cur = mine.find((b) => t >= b.start && t < b.end);
   let nb;
-  if (idx >= 0) {
-    // הסמן בתוך שורה קיימת — מחלקים את הזמן שלה: השורה הקיימת עד הסמן, החדשה מהסמן
-    const b = S.blocks[idx];
-    if (t - b.start < 0.3) t = b.start + (b.end - b.start) / 2;
-    nb = { id: uid(), start: t, end: b.end, text: '', words: null };
-    b.end = t; idx += 1;
+  if (cur) {
+    // הסמן בתוך שורה קיימת של הדובר — מחלקים את הזמן שלה: הקיימת עד הסמן, החדשה מהסמן
+    if (t - cur.start < 0.3) t = cur.start + (cur.end - cur.start) / 2;
+    nb = { id: uid(), start: t, end: cur.end, text: '', words: null, track };
+    cur.end = t;
   } else {
-    // הסמן ברווח בין שורות — שורה של עד 2.5 שניות, עד השורה הבאה
-    idx = S.blocks.findIndex((b) => b.start > t); if (idx < 0) idx = S.blocks.length;
-    const next = S.blocks[idx];
-    nb = { id: uid(), start: t, end: Math.min(t + 2.5, next ? next.start : S.dur), text: '', words: null };
+    // ברווח — שורה של עד 2.5 שניות, עד השורה הבאה של אותו דובר
+    const next = mine.find((b) => b.start > t);
+    nb = { id: uid(), start: t, end: Math.min(t + 2.5, next ? next.start : S.dur), text: '', words: null, track };
   }
   if (nb.end - nb.start < 0.3) return toast('אין כאן מקום לשורה — הזיזו קצת את הסרטון');
-  S.blocks.splice(idx, 0, nb);
+  S.blocks.push(nb); sortBlocks();
   changed(true);
   seek(nb.start + 0.01);
   const el = document.querySelector(`.blk[data-id="${nb.id}"] .blk-text`);
@@ -383,12 +443,18 @@ function drawWave() {
 }
 function renderStrip() {
   if (!S.video) return;
-  const P = stripPad();
+  const P = stripPad(), n = settings.tracks.length;
+  // כמה דוברים = כמה שורות בפס; הפס גדל בהתאם
+  const rowH = n === 1 ? 0 : (matchMedia('(max-width: 860px)').matches ? 28 : 32);
+  const wantH = n === 1 ? '' : 12 + n * rowH + 'px';
+  if (strip.style.height !== wantH) { strip.style.height = wantH; }
   stripInner.style.width = S.dur * Z + 2 * P + 'px';
   stripBlocks.innerHTML = '';
   for (const b of S.blocks) {
     const el = document.createElement('div');
-    el.className = 'sb' + (b === lastCur ? ' cur' : ''); el.dataset.id = b.id;
+    el.className = 'sb' + (b === lastCur ? ' cur' : '') + (n > 1 && tr(b) === S.activeTrack ? ' act' : ''); el.dataset.id = b.id;
+    el.style.setProperty('--tc', (settings.tracks[tr(b)] || settings.tracks[0]).color);
+    if (n > 1) { el.style.top = 6 + tr(b) * rowH + 'px'; el.style.bottom = 'auto'; el.style.height = rowH - 4 + 'px'; }
     placeSb(el, b, P);
     el.innerHTML = '<div class="sb-h l" data-e="start" title="גררו לשינוי ההתחלה"></div><span></span><div class="sb-h r" data-e="end" title="גררו לשינוי הסוף"></div>';
     el.querySelector('span').textContent = b.text.trim() || '…';
@@ -455,7 +521,7 @@ const endPan = (e) => {
   if (!p.moved) { // הקשה: קופצים לשורה שנלחצה, או לנקודה שנלחצה
     const sb = p.target.closest && p.target.closest('.sb');
     const b = sb && S.blocks.find((x) => x.id === sb.dataset.id);
-    if (b) { seek(b.start + 0.01); scrollListTo(b); }
+    if (b) { seek(b.start + 0.01); scrollListTo(b); if (S.activeTrack !== tr(b)) { S.activeTrack = tr(b); renderTracksBar(); syncStyleUI(); renderStrip(); } }
     else { const r = strip.getBoundingClientRect(); seek((strip.scrollLeft + e.clientX - r.left - stripPad()) / Z); }
     return;
   }
@@ -485,7 +551,7 @@ stripBlocks.addEventListener('pointerdown', (e) => {
   e.preventDefault(); e.stopPropagation();
   pause(); stripDrag = true; sb.classList.add('drag');
   try { sb.setPointerCapture(e.pointerId); } catch {}
-  const prev = S.blocks[i - 1], next = S.blocks[i + 1], o = { start: b.start, end: b.end };
+  const { prev, next } = neighbors(b), o = { start: b.start, end: b.end }; // רק שורות של אותו דובר מגבילות
   const tip = $('#strip-tip'); let moved = false;
   const show = (t) => { tip.hidden = false; tip.textContent = (edge === 'start' ? 'התחלה ' : 'סוף ') + fmt(t, 2); };
   show(edge === 'start' ? b.start : b.end);
@@ -558,7 +624,7 @@ $('#search').addEventListener('input', renderBlocks);
 /* ---------- תמלול ---------- */
 let worker = null, seq = 0;
 function workerRun(audio, onEvent) {
-  if (!worker) worker = new Worker('worker.js?v=202611142020', { type: 'module' });
+  if (!worker) worker = new Worker('worker.js?v=202611142029', { type: 'module' });
   const id = ++seq;
   return new Promise((res, rej) => {
     worker.onmessage = (e) => {
@@ -969,15 +1035,76 @@ $('#btn-txt').onclick = () => { if (!live().length) return toast('אין עדי�
 $('#btn-copy').onclick = async () => { const t = live().map((b) => b.text.trim()).join('\n'); if (!t) return toast('אין עדיין טקסט'); try { await navigator.clipboard.writeText(t); toast('הטקסט הועתק ✓'); } catch { toast('ההעתקה לא הצליחה'); } };
 
 /* ---------- עיצוב ---------- */
+// העיצוב חל על הדובר שנבחר בכפתורי הדוברים
+const segSyncs = [];
 function bindSeg(id, key) {
   const seg = $(id);
-  const sync = () => seg.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.v === String(settings[key])));
-  seg.addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; settings[key] = b.dataset.v; saveSettings(); sync(); draw(); });
-  sync();
+  const sync = () => seg.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.v === String(curTrack()[key])));
+  seg.addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; curTrack()[key] = b.dataset.v; saveSettings(); sync(); draw(); });
+  segSyncs.push(sync);
 }
 bindSeg('#style-seg', 'style'); bindSeg('#pos-seg', 'pos');
-$('#size').value = settings.size; $('#size').oninput = (e) => { settings.size = +e.target.value; saveSettings(); draw(); };
-$('#karaoke').checked = settings.karaoke; $('#karaoke').onchange = (e) => { settings.karaoke = e.target.checked; saveSettings(); draw(); };
+$('#color-seg').innerHTML = TRACK_COLORS.map((c) => `<button type="button" data-c="${c}" style="--c:${c}" aria-label="צבע"></button>`).join('');
+$('#color-seg').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  curTrack().color = b.dataset.c; saveSettings(); syncStyleUI(); renderTracksBar(); renderBlocks(); draw();
+});
+$('#size').oninput = (e) => { curTrack().size = +e.target.value; saveSettings(); draw(); };
+$('#karaoke').onchange = (e) => { curTrack().karaoke = e.target.checked; saveSettings(); draw(); };
+function syncStyleUI() {
+  const T = curTrack();
+  segSyncs.forEach((f) => f());
+  $('#color-seg').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.c.toUpperCase() === (T.color || '').toUpperCase()));
+  $('#size').value = T.size; $('#karaoke').checked = T.karaoke !== false;
+  $('#style-for').textContent = settings.tracks.length > 1 ? ` · ${T.name}` : '';
+}
+
+/* ---------- כפתורי הדוברים: בחירה, הוספה (+), שינוי שם, מחיקה ---------- */
+function renderTracksBar() {
+  const bar = $('#tracks-bar'); if (!bar) return;
+  bar.innerHTML = '';
+  settings.tracks.forEach((T, i) => {
+    const chip = document.createElement('button');
+    chip.type = 'button'; chip.className = 'tchip' + (i === S.activeTrack ? ' on' : '');
+    chip.style.setProperty('--tc', T.color);
+    chip.innerHTML = '<span class="dot"></span><span class="tn"></span>' + (i === S.activeTrack ? '<span class="ted" title="שינוי שם">✎</span>' + (i > 0 ? '<span class="tdel" title="הסרת הדובר">✕</span>' : '') : '');
+    chip.querySelector('.tn').textContent = T.name;
+    chip.onclick = (e) => {
+      if (e.target.closest('.ted')) return renameTrack(i);
+      if (e.target.closest('.tdel')) return removeTrack(i);
+      S.activeTrack = i; renderTracksBar(); syncStyleUI(); renderStrip();
+    };
+    bar.appendChild(chip);
+  });
+  if (settings.tracks.length < 4) {
+    const add = document.createElement('button');
+    add.type = 'button'; add.className = 'tchip add'; add.textContent = settings.tracks.length === 1 ? '＋ דובר נוסף' : '＋';
+    add.title = 'הוספת טיימליין לדובר נוסף';
+    add.onclick = () => {
+      S.activeTrack = newTrack(); renderTracksBar(); syncStyleUI(); renderBlocks(); draw();
+      toast(`נוסף ${curTrack().name} ✓ "➕ שורה" מוסיף עכשיו שורות שלו, ובכל שורה ברשימה אפשר ללחוץ על שם הדובר כדי להעביר אותה`, 6000);
+    };
+    bar.appendChild(add);
+  }
+}
+function renameTrack(i) {
+  const name = prompt('שם הדובר (למשל: דנה, מראיין):', settings.tracks[i].name);
+  if (name == null) return;
+  settings.tracks[i].name = name.trim().slice(0, 20) || settings.tracks[i].name;
+  saveSettings(); renderTracksBar(); syncStyleUI(); renderBlocks();
+}
+function removeTrack(i) {
+  const T = settings.tracks[i], n = S.blocks.filter((b) => tr(b) === i).length;
+  if (!confirm(n ? `להסיר את ${T.name}? ${n} השורות שלו יעברו ל${settings.tracks[0].name}.` : `להסיר את ${T.name}?`)) return;
+  // שורות של הדובר עוברות לדובר 1 (אם יש חפיפה — מקצרים / מוחקים שורה ריקה)
+  for (const b of S.blocks) { if (tr(b) === i) b.track = 0; else if (tr(b) > i) b.track = tr(b) - 1; }
+  settings.tracks.splice(i, 1); saveSettings();
+  sortBlocks();
+  const zero = S.blocks.filter((b) => tr(b) === 0);
+  for (let k = 1; k < zero.length; k++) if (zero[k].start < zero[k - 1].end) zero[k - 1].end = Math.max(zero[k - 1].start + 0.1, zero[k].start);
+  S.activeTrack = 0; renderTracksBar(); syncStyleUI(); changed(true);
+}
+renderTracksBar(); syncStyleUI();
 $('#len').value = settings.len;
 $('#len').onchange = (e) => {
   if (S.edited && !confirm('שינוי אורך השורה יבנה את הכתוביות מחדש מהתמלול, והתיקונים שעשיתם יימחקו. להמשיך?')) { e.target.value = settings.len; return; }

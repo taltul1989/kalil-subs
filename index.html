@@ -10,7 +10,7 @@
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=202611142020">
+<link rel="stylesheet" href="style.css?v=202611142029">
 </head>
 <body>
 <header class="top">
@@ -56,13 +56,15 @@
       <div class="strip-zoom" dir="ltr"><button id="zoom-out" aria-label="הקטנה">−</button><button id="zoom-in" aria-label="הגדלה">+</button></div>
       <div id="strip-tip" class="strip-tip" hidden></div>
     </div>
+    <div id="tracks-bar" class="tracks-bar"></div>
     <p id="strip-hint" class="strip-hint">גררו את הידיות ◀▶ בקצוות של שורה כדי לשנות מתי היא מתחילה ונגמרת · החליקו את הפס כדי לזוז בסרטון</p>
     <details class="style-box" open>
-      <summary>🎨 עיצוב הכתוביות</summary>
+      <summary>🎨 עיצוב הכתוביות<span id="style-for" class="style-for"></span></summary>
       <div class="style-grid">
         <div class="seg" id="style-seg">
-          <button data-v="bold">מודגש</button><button data-v="box">קופסה</button><button data-v="yellow">צהוב</button>
+          <button data-v="bold">מודגש</button><button data-v="box">קופסה</button>
         </div>
+        <div class="swatches" id="color-seg" aria-label="צבע"></div>
         <div class="seg" id="pos-seg">
           <button data-v="top">למעלה</button><button data-v="middle">באמצע</button><button data-v="bottom">למטה</button>
         </div>
@@ -192,6 +194,6 @@
 <div id="drop-overlay" class="drop-overlay" hidden><div>שחררו כאן 🎬</div></div>
 <div id="toast" class="toast" hidden></div>
 
-<script src="app.js?v=202611142020"></script>
+<script src="app.js?v=202611142029"></script>
 </body>
 </html>
