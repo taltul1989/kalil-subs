@@ -558,7 +558,7 @@ $('#search').addEventListener('input', renderBlocks);
 /* ---------- תמלול ---------- */
 let worker = null, seq = 0;
 function workerRun(audio, onEvent) {
-  if (!worker) worker = new Worker('worker.js?v=202611142014', { type: 'module' });
+  if (!worker) worker = new Worker('worker.js?v=202611142020', { type: 'module' });
   const id = ++seq;
   return new Promise((res, rej) => {
     worker.onmessage = (e) => {
@@ -892,7 +892,7 @@ function finishExport() {
   clearInterval(ex.watch);
   S.exporting = null; speaker.gain.value = 1;
   try { ex.lock && ex.lock.release(); } catch {}
-  ex.rec.onstop = () => {
+  ex.rec.onstop = async () => {
     if (ex.cancelled) {
       $('#export-overlay').hidden = true;
       return toast(ex.failed ? 'ההורדה נתקעה ונעצרה. העבודה שלך שמורה — נסו שוב, או הורידו קובץ SRT' : 'בוטל', ex.failed ? 7000 : 2800);
@@ -900,7 +900,8 @@ function finishExport() {
     const ext = ex.mime.includes('mp4') ? 'mp4' : 'webm';
     const base = S.file.name.replace(/\.[^.]+$/, '');
     const name = `${base}-כתוביות.${ext}`;
-    const blob = new Blob(ex.chunks, { type: ex.mime.split(';')[0] });
+    let blob = new Blob(ex.chunks, { type: ex.mime.split(';')[0] });
+    if (ext === 'mp4') { try { blob = await fixMp4Duration(blob, S.dur); } catch (e) { console.warn('duration fix failed', e); } }
     const file = new File([blob], name, { type: blob.type });
     const canShare = matchMedia('(pointer: coarse)').matches && !!(navigator.canShare && navigator.canShare({ files: [file] }));
     if (!canShare) { // מחשב: הורדה רגילה
@@ -916,6 +917,43 @@ function finishExport() {
     $('#btn-download').onclick = () => { download(blob, name); toast('נשמר בהורדות ✓ (מופיע גם בגלריה, באלבום "Download")', 4500); closeDone(); };
   };
   ex.rec.stop();
+}
+/* הדפדפן כותב את הסרטון בחתיכות (fragmented MP4) ולא מעדכן את האורך בכותרת הקובץ.
+   נגנים מחשבים לבד, אבל הגלריה ורשימת ההורדות מציגות אורך שגוי. כאן כותבים את האורך האמיתי
+   לתוך התיבות mvhd / tkhd / mdhd / mehd שבתחילת הקובץ (בלי לגעת בווידאו עצמו). */
+async function fixMp4Duration(blob, seconds) {
+  const headLen = Math.min(blob.size, 4 * 1024 * 1024);
+  const head = new Uint8Array(await blob.slice(0, headLen).arrayBuffer());
+  const dv = new DataView(head.buffer);
+  const type = (o) => String.fromCharCode(head[o + 4], head[o + 5], head[o + 6], head[o + 7]);
+  let movieScale = 0, patched = 0;
+  const setDur = (o, ver, val) => { // o = מיקום שדה הזמן
+    if (ver === 1) dv.setBigUint64(o, BigInt(Math.round(val)));
+    else dv.setUint32(o, Math.min(0xffffffff, Math.round(val)));
+    patched++;
+  };
+  const walk = (start, end) => {
+    for (let o = start; o + 8 <= end;) {
+      let size = dv.getUint32(o), hdr = 8;
+      if (size === 1) { size = Number(dv.getBigUint64(o + 8)); hdr = 16; }
+      else if (size === 0) size = end - o;
+      if (size < 8 || o + size > head.length) { // תיבה שחורגת מהחלק שקראנו (למשל mdat) — זה בסדר, מדלגים
+        if (type(o) === 'moov') throw new Error('moov too big');
+        return;
+      }
+      const t = type(o), b = o + hdr, ver = head[b];
+      if (t === 'moov' || t === 'trak' || t === 'mdia' || t === 'mvex') walk(b, o + size);
+      else if (t === 'mvhd') { const s = ver === 1 ? 20 : 12; movieScale = dv.getUint32(b + s); setDur(b + s + 4, ver, seconds * movieScale); }
+      else if (t === 'tkhd' && movieScale) setDur(b + (ver === 1 ? 28 : 20), ver, seconds * movieScale);
+      else if (t === 'mdhd') { const s = ver === 1 ? 20 : 12; setDur(b + s + 4, ver, seconds * dv.getUint32(b + s)); }
+      else if (t === 'mehd' && movieScale) setDur(b + 4, ver, seconds * movieScale);
+      if (t === 'moof' || t === 'mdat') return; // הגענו לחתיכות הווידאו — הכותרת נגמרה
+      o += size;
+    }
+  };
+  walk(0, head.length);
+  if (!patched) return blob;
+  return new Blob([head, blob.slice(headLen)], { type: blob.type });
 }
 function closeDone() { $('#export-overlay').hidden = true; $('#export-done').hidden = true; $('#export-progress').hidden = false; }
 $('#btn-done-close').onclick = closeDone;
